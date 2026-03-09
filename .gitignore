@@ -5,9 +5,13 @@
 # Hatcheck
 /objects/
 
-# macOS
-.DS_Store
-*.pem
+# VS Code
+.vscode/
+.code-workspace
 
 # local env files
 .env*.local
+
+# macOS
+.DS_Store
+*.pem
