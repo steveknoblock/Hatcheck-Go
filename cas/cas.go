@@ -24,7 +24,7 @@ func Stash(data string, objPath string) (string, error) {
 	fmt.Printf("File: %s\n", fileName)
 
 	// Create directory.
-	path := objPath + shardName
+	path := objPath + "/" + shardName
 	fmt.Println("Path: " + path)
 
 	if e := os.MkdirAll(path, os.ModePerm); e != nil {
@@ -56,8 +56,7 @@ func Fetch(hexHash string, objPath string) (string, error) {
 	// File name is remaining 30 hex chars.
 	fileName := hexHash[2:]
 
-	// TODO: make this path configurable
-	filePath := objPath + shardName + "/" + fileName
+	filePath := objPath + "/" + shardName + "/" + fileName
 
 	// Read file.
 	data, e := os.ReadFile(filePath)
