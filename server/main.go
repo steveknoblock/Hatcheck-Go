@@ -5,11 +5,12 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 
 	"github.com/steveknoblock/hatcheck-go/cas"
 )
 
-func stashHandler(w http.ResponseWriter, req *http.Request) {
+func stashHandler(w http.ResponseWriter, req *http.Request, objPath string) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -32,7 +33,7 @@ func stashHandler(w http.ResponseWriter, req *http.Request) {
 	fmt.Fprintf(w, "%s\n", hash)
 }
 
-func fetchHandler(w http.ResponseWriter, req *http.Request) {
+func fetchHandler(w http.ResponseWriter, req *http.Request, objPath string) {
 	if req.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -44,7 +45,7 @@ func fetchHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	data, err := cas.Fetch(hash)
+	data, err := cas.Fetch(hash, objPath)
 	if err != nil {
 		http.Error(w, "content not found", http.StatusNotFound)
 		return
@@ -55,8 +56,18 @@ func fetchHandler(w http.ResponseWriter, req *http.Request) {
 }
 
 func main() {
-	http.HandleFunc("/stash", stashHandler)
-	http.HandleFunc("/fetch", fetchHandler)
+
+	objPath := os.Getenv("HATCHECK_DATA")
+	if objPath == "" {
+		objPath = "../objects" // default if not set
+	}
+
+	http.HandleFunc("/stash", func(w http.ResponseWriter, req *http.Request) {
+		stashHandler(w, req, objPath)
+	})
+	http.HandleFunc("/fetch", func(w http.ResponseWriter, req *http.Request) {
+		fetchHandler(w, req, objPath)
+	})
 
 	log.Println("starting server on :8090")
 	if err := http.ListenAndServe(":8090", nil); err != nil {

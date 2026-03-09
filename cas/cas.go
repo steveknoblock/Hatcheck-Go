@@ -6,7 +6,7 @@ import (
 	"os"
 )
 
-func Stash(data string) (string, error) {
+func Stash(data string, objPath string) (string, error) {
 
 	// Create hash of data.
 	hash := md5.Sum([]byte(data))
@@ -22,9 +22,6 @@ func Stash(data string) (string, error) {
 
 	fmt.Printf("Shard: %s\n", shardName)
 	fmt.Printf("File: %s\n", fileName)
-
-	// TODO: make this path configurable
-	objPath := "../objects/"
 
 	// Create directory.
 	path := objPath + shardName
@@ -52,7 +49,7 @@ func Stash(data string) (string, error) {
 
 }
 
-func Fetch(hexHash string) (string, error) {
+func Fetch(hexHash string, objPath string) (string, error) {
 
 	// Shard name is first 2 hex chars (1 byte).
 	shardName := hexHash[0:2]
@@ -60,7 +57,7 @@ func Fetch(hexHash string) (string, error) {
 	fileName := hexHash[2:]
 
 	// TODO: make this path configurable
-	filePath := "../objects/" + shardName + "/" + fileName
+	filePath := objPath + shardName + "/" + fileName
 
 	// Read file.
 	data, e := os.ReadFile(filePath)
