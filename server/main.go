@@ -1,11 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/steveknoblock/hatcheck-go/cas"
 )
@@ -55,11 +57,50 @@ func fetchHandler(w http.ResponseWriter, req *http.Request, objPath string) {
 	fmt.Fprintf(w, "%s\n", data)
 }
 
-func main() {
+func listHandler(w http.ResponseWriter, req *http.Request, objPath string) {
+	if req.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 
+	var hashes []string
+
+	err := filepath.Walk(objPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		// Skip directories, only process files
+		if !info.IsDir() {
+			// Reconstruct hash from shard directory name and filename
+			shard := filepath.Base(filepath.Dir(path))
+			file := filepath.Base(path)
+			hashes = append(hashes, shard+file)
+		}
+		return nil
+	})
+
+	if err != nil {
+		http.Error(w, "failed to list objects", http.StatusInternalServerError)
+		return
+	}
+
+	if hashes == nil {
+		hashes = []string{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(hashes)
+}
+
+func main() {
 	objPath := os.Getenv("HATCHECK_DATA")
 	if objPath == "" {
 		objPath = "../objects" // default if not set
+	}
+
+	uiPath := os.Getenv("HATCHECK_UI")
+	if uiPath == "" {
+		uiPath = "../ui" // default if not set
 	}
 
 	http.HandleFunc("/stash", func(w http.ResponseWriter, req *http.Request) {
@@ -68,6 +109,12 @@ func main() {
 	http.HandleFunc("/fetch", func(w http.ResponseWriter, req *http.Request) {
 		fetchHandler(w, req, objPath)
 	})
+	http.HandleFunc("/list", func(w http.ResponseWriter, req *http.Request) {
+		listHandler(w, req, objPath)
+	})
+
+	// Serve static UI files
+	http.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.Dir(uiPath))))
 
 	log.Println("starting server on :8090")
 	if err := http.ListenAndServe(":8090", nil); err != nil {
