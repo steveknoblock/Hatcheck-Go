@@ -4,6 +4,7 @@
 
 # Hatcheck
 /objects/
+/metadata/
 
 # VS Code
 .vscode/
