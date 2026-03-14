@@ -110,6 +110,7 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
+            flex-shrink: 0;
         }
 
         .panel-label {
@@ -125,6 +126,57 @@
             font-weight: 500;
         }
 
+        /* Tag filter */
+        .tag-filter {
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+
+        .tag-filter input {
+            flex: 1;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: var(--mono);
+            font-size: 11px;
+            padding: 5px 8px;
+            outline: none;
+            transition: border-color 0.15s ease;
+        }
+
+        .tag-filter input:focus {
+            border-color: var(--accent);
+        }
+
+        .tag-filter input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .clear-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 14px;
+            cursor: pointer;
+            padding: 2px 4px;
+            line-height: 1;
+            transition: color 0.15s ease;
+            display: none;
+        }
+
+        .clear-btn.visible {
+            display: block;
+        }
+
+        .clear-btn:hover {
+            color: var(--accent);
+        }
+
+        /* Hash list */
         .hash-list {
             flex: 1;
             overflow-y: auto;
@@ -145,7 +197,7 @@
         }
 
         .hash-item {
-            padding: 8px 16px;
+            padding: 8px 16px 6px;
             font-size: 11px;
             color: var(--text-dim);
             cursor: pointer;
@@ -175,6 +227,31 @@
         @keyframes highlight {
             0% { background: rgba(200, 240, 75, 0.2); color: var(--accent); }
             100% { background: rgba(200, 240, 75, 0.06); color: var(--accent); }
+        }
+
+        /* Tag pills */
+        .tag-pills {
+            margin-top: 4px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+
+        .tag-pill {
+            font-size: 10px;
+            color: var(--accent-dim);
+            cursor: pointer;
+            transition: color 0.15s ease;
+            letter-spacing: 0.02em;
+        }
+
+        .tag-pill:hover {
+            color: var(--accent);
+        }
+
+        .tag-pill.active-filter {
+            color: var(--accent);
+            text-decoration: underline;
         }
 
         .empty-state {
@@ -215,18 +292,6 @@
 
         .divider:hover, .divider.dragging {
             background: var(--accent);
-        }
-
-        .divider::after {
-            content: '';
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            width: 2px;
-            height: 32px;
-            background: inherit;
-            border-radius: 1px;
         }
 
         /* Right Panel */
@@ -314,7 +379,7 @@
             color: var(--text-muted);
         }
 
-        /* Toast notification */
+        /* Toast */
         .toast {
             position: fixed;
             bottom: 24px;
@@ -372,6 +437,10 @@
                 <button class="refresh-btn" onclick="loadHashes()">↺</button>
             </div>
         </div>
+        <div class="tag-filter">
+            <input type="text" id="tag-filter" placeholder="#filter by tag..." oninput="onTagFilter(this.value)">
+            <button class="clear-btn" id="clear-btn" onclick="clearFilter()" title="Clear filter">×</button>
+        </div>
         <div class="hash-list" id="hash-list">
             <div class="empty-state">No objects in store.<br>Write something and stash it.</div>
         </div>
@@ -381,13 +450,11 @@
 
     <div class="panel-right">
         <div class="editor-header">
-            <div class="current-hash" id="current-hash">
-                <span>—</span>
-            </div>
+            <div class="current-hash" id="current-hash"><span>—</span></div>
             <button class="stash-btn" id="stash-btn" onclick="stashContent()">Stash</button>
         </div>
         <div class="editor-area">
-            <textarea id="editor" placeholder="Write something here, then click Stash to store it in the CAS..."></textarea>
+            <textarea id="editor" placeholder="Write something here, then click Stash to store it in the CAS...&#10;&#10;Use #hashtags in your text to tag objects for later retrieval."></textarea>
         </div>
     </div>
 </div>
@@ -400,13 +467,15 @@
 <script>
     const API = 'http://localhost:8090';
     let currentHash = null;
+    let allObjects = []; // [{hash, tags}]
+    let activeFilter = '';
 
     // --- Draggable Divider ---
     const divider = document.getElementById('divider');
     const panelLeft = document.getElementById('panel-left');
     let dragging = false;
 
-    divider.addEventListener('mousedown', (e) => {
+    divider.addEventListener('mousedown', () => {
         dragging = true;
         divider.classList.add('dragging');
         document.body.style.cursor = 'col-resize';
@@ -415,12 +484,9 @@
 
     document.addEventListener('mousemove', (e) => {
         if (!dragging) return;
-        const workspace = panelLeft.parentElement;
-        const rect = workspace.getBoundingClientRect();
+        const rect = panelLeft.parentElement.getBoundingClientRect();
         const newWidth = e.clientX - rect.left;
-        const min = 160;
-        const max = workspace.offsetWidth - 200;
-        panelLeft.style.width = Math.max(min, Math.min(max, newWidth)) + 'px';
+        panelLeft.style.width = Math.max(160, Math.min(panelLeft.parentElement.offsetWidth - 200, newWidth)) + 'px';
     });
 
     document.addEventListener('mouseup', () => {
@@ -431,80 +497,105 @@
         document.body.style.userSelect = '';
     });
 
-    // --- Load Hashes ---
+    // --- Render ---
+    function renderList(objects, highlightHash = null) {
+        const list = document.getElementById('hash-list');
+        document.getElementById('object-count').textContent = objects.length;
+
+        if (objects.length === 0) {
+            list.innerHTML = '<div class="empty-state">' +
+                (activeFilter ? `No objects tagged #${activeFilter}.` : 'No objects in store.<br>Write something and stash it.') +
+                '</div>';
+            return;
+        }
+
+        list.innerHTML = objects.map(obj => {
+            const isActive = obj.hash === currentHash;
+            const isNew = obj.hash === highlightHash;
+            const tagHtml = obj.tags && obj.tags.length > 0
+                ? `<div class="tag-pills">${obj.tags.map(t =>
+                    `<span class="tag-pill ${t === activeFilter ? 'active-filter' : ''}"
+                           onclick="filterByTag(event,'${t}')">#${t}</span>`
+                  ).join('')}</div>`
+                : '';
+            return `<div class="hash-item ${isActive ? 'active' : ''} ${isNew ? 'new' : ''}"
+                         onclick="fetchContent('${obj.hash}')"
+                         title="${obj.hash}">
+                        ${obj.hash}
+                        ${tagHtml}
+                    </div>`;
+        }).join('');
+    }
+
+    // --- Load ---
     async function loadHashes(highlightHash = null) {
         try {
             const res = await fetch(`${API}/list`);
             if (!res.ok) throw new Error('Failed to fetch list');
-            const hashes = await res.json();
-
-            const list = document.getElementById('hash-list');
-            const count = document.getElementById('object-count');
-
-            count.textContent = hashes.length;
-
-            if (hashes.length === 0) {
-                list.innerHTML = '<div class="empty-state">No objects in store.<br>Write something and stash it.</div>';
-                return;
-            }
-
-            list.innerHTML = hashes.map(hash => `
-                <div class="hash-item ${hash === currentHash ? 'active' : ''} ${hash === highlightHash ? 'new' : ''}"
-                     onclick="fetchContent('${hash}')"
-                     title="${hash}">
-                    ${hash}
-                </div>
-            `).join('');
-
-        } catch (err) {
-            showToast('Error loading objects', err.message, true);
-        }
-    }
-
-    // --- Fetch Content ---
-    async function fetchContent(hash) {
-        try {
-            const res = await fetch(`${API}/fetch?hash=${hash}`);
-            if (!res.ok) throw new Error('Not found');
-            const data = await res.text();
-
-            currentHash = hash;
-            document.getElementById('editor').value = data.trimEnd();
-            document.getElementById('current-hash').innerHTML = `<span>${hash}</span>`;
-
-            // Update active state in list
-            document.querySelectorAll('.hash-item').forEach(el => {
-                el.classList.toggle('active', el.title === hash);
-            });
-
+            allObjects = await res.json();
+            const filtered = activeFilter ? applyFilter(activeFilter) : allObjects;
+            renderList(filtered, highlightHash);
         } catch (err) {
             showToast('Error', err.message, true);
         }
     }
 
-    // --- Stash Content ---
+    // --- Filter ---
+    function applyFilter(tag) {
+        return allObjects.filter(obj => obj.tags && obj.tags.includes(tag));
+    }
+
+    function onTagFilter(val) {
+        activeFilter = val.replace(/^#/, '').toLowerCase().trim();
+        document.getElementById('clear-btn').classList.toggle('visible', activeFilter !== '');
+        renderList(activeFilter ? applyFilter(activeFilter) : allObjects);
+    }
+
+    function filterByTag(event, tag) {
+        event.stopPropagation();
+        const input = document.getElementById('tag-filter');
+        input.value = '#' + tag;
+        onTagFilter(input.value);
+    }
+
+    function clearFilter() {
+        const input = document.getElementById('tag-filter');
+        input.value = '';
+        onTagFilter('');
+        input.focus();
+    }
+
+    // --- Fetch ---
+    async function fetchContent(hash) {
+        try {
+            const res = await fetch(`${API}/fetch?hash=${hash}`);
+            if (!res.ok) throw new Error('Not found');
+            const data = await res.text();
+            currentHash = hash;
+            document.getElementById('editor').value = data.trimEnd();
+            document.getElementById('current-hash').innerHTML = `<span>${hash}</span>`;
+            document.querySelectorAll('.hash-item').forEach(el => {
+                el.classList.toggle('active', el.title === hash);
+            });
+        } catch (err) {
+            showToast('Error', err.message, true);
+        }
+    }
+
+    // --- Stash ---
     async function stashContent() {
         const content = document.getElementById('editor').value;
         const btn = document.getElementById('stash-btn');
-
         btn.disabled = true;
         btn.textContent = 'Stashing...';
-
         try {
-            const res = await fetch(`${API}/stash`, {
-                method: 'POST',
-                body: content,
-            });
-
+            const res = await fetch(`${API}/stash`, { method: 'POST', body: content });
             if (!res.ok) throw new Error('Stash failed');
-
             const hash = (await res.text()).trim();
             currentHash = hash;
             document.getElementById('current-hash').innerHTML = `<span>${hash}</span>`;
-
             await loadHashes(hash);
             showToast('Stashed', hash);
-
         } catch (err) {
             showToast('Error', err.message, true);
         } finally {
