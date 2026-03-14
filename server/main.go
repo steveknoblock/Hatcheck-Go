@@ -9,8 +9,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/steveknoblock/hatcheck-go/cas"
-	"github.com/steveknoblock/hatcheck-go/metadata"
+	"github.com/steveknoblock/hatcheck-go/internal/cas"
+	"github.com/steveknoblock/hatcheck-go/internal/metadata"
 )
 
 func stashHandler(w http.ResponseWriter, req *http.Request, objPath string, meta *metadata.Store) {
