@@ -146,17 +146,17 @@ func queryHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store
 func main() {
 	objPath := os.Getenv("HATCHECK_DATA")
 	if objPath == "" {
-		objPath = "../objects"
+		objPath = "./objects"
 	}
 
 	uiPath := os.Getenv("HATCHECK_UI")
 	if uiPath == "" {
-		uiPath = "../ui"
+		uiPath = "./ui"
 	}
 
 	metaPath := os.Getenv("HATCHECK_META")
 	if metaPath == "" {
-		metaPath = "../metadata"
+		metaPath = "./metadata"
 	}
 
 	meta, err := metadata.New(metaPath)
