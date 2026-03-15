@@ -1,8 +1,5 @@
-# VS Code
-.vscode/
-.code-workspace
-
 # Hatcheck
+hatcheck
 /objects/
 /metadata/
 
