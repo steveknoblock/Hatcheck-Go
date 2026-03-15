@@ -13,6 +13,11 @@ import (
 	"github.com/steveknoblock/hatcheck-go/internal/metadata"
 )
 
+type hashWithTags struct {
+	Hash string   `json:"hash"`
+	Tags []string `json:"tags"`
+}
+
 func stashHandler(w http.ResponseWriter, req *http.Request, objPath string, meta *metadata.Store) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -93,11 +98,6 @@ func listHandler(w http.ResponseWriter, req *http.Request, objPath string, meta 
 		hashes = []string{}
 	}
 
-	type hashWithTags struct {
-		Hash string   `json:"hash"`
-		Tags []string `json:"tags"`
-	}
-
 	result := make([]hashWithTags, len(hashes))
 	for i, hash := range hashes {
 		result[i] = hashWithTags{
@@ -125,11 +125,6 @@ func queryHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store
 	}
 
 	hashes := meta.Query(indexName, key)
-
-	type hashWithTags struct {
-		Hash string   `json:"hash"`
-		Tags []string `json:"tags"`
-	}
 
 	result := make([]hashWithTags, len(hashes))
 	for i, hash := range hashes {
