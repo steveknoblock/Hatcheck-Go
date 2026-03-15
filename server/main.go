@@ -93,7 +93,6 @@ func listHandler(w http.ResponseWriter, req *http.Request, objPath string, meta 
 		hashes = []string{}
 	}
 
-	// Annotate each hash with its tags from the metadata store.
 	type hashWithTags struct {
 		Hash string   `json:"hash"`
 		Tags []string `json:"tags"`
@@ -117,27 +116,15 @@ func queryHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store
 		return
 	}
 
-	tag := req.URL.Query().Get("tag")
-	date := req.URL.Query().Get("date")
+	indexName := req.URL.Query().Get("index")
+	key := req.URL.Query().Get("key")
 
-	if tag == "" && date == "" {
-		http.Error(w, "missing tag or date parameter", http.StatusBadRequest)
+	if indexName == "" || key == "" {
+		http.Error(w, "missing index or key parameter", http.StatusBadRequest)
 		return
 	}
 
-	var hashes []string
-	switch {
-	case tag != "" && date != "":
-		hashes = meta.QueryByTagAndDate(tag, date)
-	case tag != "":
-		hashes = meta.QueryByTag(tag)
-	case date != "":
-		hashes = meta.QueryByDate(date)
-	}
-
-	if hashes == nil {
-		hashes = []string{}
-	}
+	hashes := meta.Query(indexName, key)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(hashes)
@@ -159,7 +146,10 @@ func main() {
 		metaPath = "./metadata"
 	}
 
-	meta, err := metadata.New(metaPath)
+	meta, err := metadata.New(metaPath,
+		&metadata.TagIndex{},
+		&metadata.DateIndex{},
+	)
 	if err != nil {
 		log.Fatalf("failed to load metadata store: %v", err)
 	}
