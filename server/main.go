@@ -126,8 +126,21 @@ func queryHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store
 
 	hashes := meta.Query(indexName, key)
 
+	type hashWithTags struct {
+		Hash string   `json:"hash"`
+		Tags []string `json:"tags"`
+	}
+
+	result := make([]hashWithTags, len(hashes))
+	for i, hash := range hashes {
+		result[i] = hashWithTags{
+			Hash: hash,
+			Tags: meta.TagsForHash(hash),
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(hashes)
+	json.NewEncoder(w).Encode(result)
 }
 
 func main() {
