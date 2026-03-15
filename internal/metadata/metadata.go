@@ -18,13 +18,23 @@ type Entry struct {
 	Tags    []string  `json:"tags"`
 }
 
-// Store holds the log and the indexes built from it.
+// Index is the interface that all indexes must implement.
+// Any struct with these three methods is automatically an Index.
+type Index interface {
+	// Name returns the identifier used to select this index in a query.
+	Name() string
+	// Add is called for each entry when building or updating the index.
+	Add(entry Entry)
+	// Query returns hashes matching the given key.
+	Query(key string) []string
+}
+
+// Store holds the log and a set of registered indexes.
 type Store struct {
-	mu        sync.RWMutex
-	logPath   string
-	Log       []Entry
-	TagIndex  map[string][]string // tag -> []hash
-	DateIndex map[string][]string // YYYY-MM-DD -> []hash
+	mu      sync.RWMutex
+	logPath string
+	Log     []Entry
+	indexes []Index
 }
 
 var hashtagRe = regexp.MustCompile(`#([a-zA-Z0-9_]+)`)
@@ -44,17 +54,16 @@ func ParseTags(content string) []string {
 	return tags
 }
 
-// New creates a Store and loads the log from the metadata directory.
+// New creates a Store, loads the log, and registers the provided indexes.
 // The metadata directory is created if it does not exist.
-func New(metaPath string) (*Store, error) {
+func New(metaPath string, indexes ...Index) (*Store, error) {
 	if err := os.MkdirAll(metaPath, 0755); err != nil {
 		return nil, err
 	}
 
 	s := &Store{
-		logPath:   filepath.Join(metaPath, "log.json"),
-		TagIndex:  make(map[string][]string),
-		DateIndex: make(map[string][]string),
+		logPath: filepath.Join(metaPath, "log.json"),
+		indexes: indexes,
 	}
 
 	if err := s.load(); err != nil {
@@ -86,21 +95,16 @@ func (s *Store) save() error {
 	return os.WriteFile(s.logPath, data, 0644)
 }
 
-// buildIndexes rebuilds TagIndex and DateIndex from the log.
+// buildIndexes replays the full log through all registered indexes.
 func (s *Store) buildIndexes() {
-	s.TagIndex = make(map[string][]string)
-	s.DateIndex = make(map[string][]string)
-
 	for _, entry := range s.Log {
-		date := entry.Created.Format("2006-01-02")
-		s.DateIndex[date] = appendUnique(s.DateIndex[date], entry.Hash)
-		for _, tag := range entry.Tags {
-			s.TagIndex[tag] = appendUnique(s.TagIndex[tag], entry.Hash)
+		for _, idx := range s.indexes {
+			idx.Add(entry)
 		}
 	}
 }
 
-// Append adds a new entry to the log, saves it, and updates the indexes.
+// Append adds a new entry to the log, saves it, and updates all indexes.
 func (s *Store) Append(hash string, size int, content string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -118,46 +122,35 @@ func (s *Store) Append(hash string, size int, content string) error {
 		return err
 	}
 
-	// Update indexes incrementally rather than full rebuild.
-	date := entry.Created.Format("2006-01-02")
-	s.DateIndex[date] = appendUnique(s.DateIndex[date], entry.Hash)
-	for _, tag := range entry.Tags {
-		s.TagIndex[tag] = appendUnique(s.TagIndex[tag], entry.Hash)
+	for _, idx := range s.indexes {
+		idx.Add(entry)
 	}
 
 	return nil
 }
 
-// QueryByTag returns all hashes tagged with the given tag.
-func (s *Store) QueryByTag(tag string) []string {
+// Query returns hashes from the named index matching the given key.
+// Returns an empty slice if the index is not found or has no matches.
+func (s *Store) Query(indexName, key string) []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	tag = strings.ToLower(tag)
-	return s.TagIndex[tag]
-}
 
-// QueryByDate returns all hashes stashed on the given date (YYYY-MM-DD).
-func (s *Store) QueryByDate(date string) []string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.DateIndex[date]
-}
-
-// QueryByTagAndDate returns hashes matching both tag and date.
-func (s *Store) QueryByTagAndDate(tag, date string) []string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	tag = strings.ToLower(tag)
-	tagHashes := s.TagIndex[tag]
-	dateHashes := s.DateIndex[date]
-	return intersect(tagHashes, dateHashes)
+	for _, idx := range s.indexes {
+		if idx.Name() == indexName {
+			results := idx.Query(key)
+			if results == nil {
+				return []string{}
+			}
+			return results
+		}
+	}
+	return []string{}
 }
 
 // TagsForHash returns the tags from the most recent log entry for a given hash.
 func (s *Store) TagsForHash(hash string) []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	// Walk log in reverse to find the most recent entry.
 	for i := len(s.Log) - 1; i >= 0; i-- {
 		if s.Log[i].Hash == hash {
 			return s.Log[i].Tags
@@ -165,6 +158,58 @@ func (s *Store) TagsForHash(hash string) []string {
 	}
 	return []string{}
 }
+
+// IndexNames returns the names of all registered indexes.
+func (s *Store) IndexNames() []string {
+	names := make([]string, len(s.indexes))
+	for i, idx := range s.indexes {
+		names[i] = idx.Name()
+	}
+	return names
+}
+
+// --- Built-in indexes ---
+
+// TagIndex maps tags to hashes.
+type TagIndex struct {
+	data map[string][]string
+}
+
+func (t *TagIndex) Name() string { return "tag" }
+
+func (t *TagIndex) Add(entry Entry) {
+	if t.data == nil {
+		t.data = make(map[string][]string)
+	}
+	for _, tag := range entry.Tags {
+		t.data[tag] = appendUnique(t.data[tag], entry.Hash)
+	}
+}
+
+func (t *TagIndex) Query(key string) []string {
+	return t.data[strings.ToLower(key)]
+}
+
+// DateIndex maps dates (YYYY-MM-DD) to hashes.
+type DateIndex struct {
+	data map[string][]string
+}
+
+func (d *DateIndex) Name() string { return "date" }
+
+func (d *DateIndex) Add(entry Entry) {
+	if d.data == nil {
+		d.data = make(map[string][]string)
+	}
+	date := entry.Created.Format("2006-01-02")
+	d.data[date] = appendUnique(d.data[date], entry.Hash)
+}
+
+func (d *DateIndex) Query(key string) []string {
+	return d.data[key]
+}
+
+// --- Helpers ---
 
 // appendUnique appends a value to a slice only if not already present.
 func appendUnique(slice []string, val string) []string {
