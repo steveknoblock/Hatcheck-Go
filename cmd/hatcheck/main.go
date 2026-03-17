@@ -99,11 +99,11 @@ func runStash(args []string, objPath, metaPath string) {
 	}
 
 	// Append to metadata log.
-	meta, err := metadata.New(metaPath, &metadata.TagIndex{}, &metadata.DateIndex{})
+	meta, err := metadata.New(metaPath, &metadata.TagIndex{}, &metadata.DateIndex{}, &metadata.NameIndex{}, &metadata.RelationIndex{})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not load metadata store: %v\n", err)
 	} else {
-		meta.Append(hash, len(content), content)
+		meta.AppendStash(hash, len(content), content)
 	}
 
 	fmt.Println(hash)
@@ -146,7 +146,7 @@ func runList(args []string, objPath, metaPath string) {
 	fs.Parse(args)
 
 	// Load metadata for tag annotation.
-	meta, err := metadata.New(metaPath, &metadata.TagIndex{}, &metadata.DateIndex{})
+	meta, err := metadata.New(metaPath, &metadata.TagIndex{}, &metadata.DateIndex{}, &metadata.NameIndex{}, &metadata.RelationIndex{})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not load metadata store: %v\n", err)
 	}
@@ -225,7 +225,7 @@ func runQuery(args []string, metaPath string) {
 		os.Exit(1)
 	}
 
-	meta, err := metadata.New(metaPath, &metadata.TagIndex{}, &metadata.DateIndex{})
+	meta, err := metadata.New(metaPath, &metadata.TagIndex{}, &metadata.DateIndex{}, &metadata.NameIndex{}, &metadata.RelationIndex{})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: could not load metadata store: %v\n", err)
 		os.Exit(1)

@@ -13,11 +13,6 @@ import (
 	"github.com/steveknoblock/hatcheck-go/internal/metadata"
 )
 
-type hashWithTags struct {
-	Hash string   `json:"hash"`
-	Tags []string `json:"tags"`
-}
-
 func stashHandler(w http.ResponseWriter, req *http.Request, objPath string, meta *metadata.Store) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -39,7 +34,7 @@ func stashHandler(w http.ResponseWriter, req *http.Request, objPath string, meta
 		return
 	}
 
-	if err := meta.Append(hash, len(body), content); err != nil {
+	if err := meta.AppendStash(hash, len(body), content); err != nil {
 		log.Printf("warning: failed to append metadata for %s: %v", hash, err)
 	}
 
@@ -98,6 +93,11 @@ func listHandler(w http.ResponseWriter, req *http.Request, objPath string, meta 
 		hashes = []string{}
 	}
 
+	type hashWithTags struct {
+		Hash string   `json:"hash"`
+		Tags []string `json:"tags"`
+	}
+
 	result := make([]hashWithTags, len(hashes))
 	for i, hash := range hashes {
 		result[i] = hashWithTags{
@@ -126,16 +126,8 @@ func queryHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store
 
 	hashes := meta.Query(indexName, key)
 
-	result := make([]hashWithTags, len(hashes))
-	for i, hash := range hashes {
-		result[i] = hashWithTags{
-			Hash: hash,
-			Tags: meta.TagsForHash(hash),
-		}
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	json.NewEncoder(w).Encode(hashes)
 }
 
 func main() {
@@ -157,6 +149,8 @@ func main() {
 	meta, err := metadata.New(metaPath,
 		&metadata.TagIndex{},
 		&metadata.DateIndex{},
+		&metadata.NameIndex{},
+		&metadata.RelationIndex{},
 	)
 	if err != nil {
 		log.Fatalf("failed to load metadata store: %v", err)
