@@ -6,6 +6,7 @@ hatcheck
 # VS Code
 .vscode/
 .code-workspace
+.markdownlint.json
 
 # local env files
 .env*.local
