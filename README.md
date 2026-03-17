@@ -6,6 +6,8 @@ Your content. On the web. As JSON objects. A simple content addressable storage 
 
 ## Getting Started
 
+See SETUP.md
+
 Hatcheck is programmed in Go. The minimum version required to run Hatcheck is Go 1.21.6
 
 ## User Interface
