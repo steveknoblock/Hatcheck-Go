@@ -2,6 +2,8 @@
 
 The goal of Hatcheck is to enable the user to store and retrieve immutable data over HTTP to a web page or web application.
 
+Simplicity, conciseness, and minimalism are goals Hatcheck tries to satisfy. The CAS is about as simple as you can get. It stores plain text. The text is used to generate a hash used to identify it in the store. There are four basic operations provided for creating and structuring objects. Tags are provided for organizing objects.
+
 Data is stored in an Object, for which the value cannot be changed or removed from the store. A new “version” of the object is stored the same as any other object, and alongside any other objects. Immutable data has many advantages. A value returned from the store is independent of any other value. The CAS does not know about or store any kind of state. Hatcheck does allow storing some state, such as a Name, which can be changed. The CAS and the metadata are both immutable. The CAS by its nature, and the metadata by its log format. Every change leaves the previous data untouched and a history of changes exists in the metadata.
 
 ## Metadata
@@ -96,7 +98,7 @@ Create Name
 Returns hash identifier to point to the collection.
 
 
-## Data Structure
+## Data Structures
 
 ### Object
 
