@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// newTestStore creates a Store with TagIndex and DateIndex backed by a temp directory.
+// newTestStore creates a Store backed by a temp directory, cleaned up after the test.
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "hatcheck-meta-*")
@@ -15,7 +15,7 @@ func newTestStore(t *testing.T) *Store {
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
 
-	store, err := New(dir, &TagIndex{}, &DateIndex{})
+	store, err := New(dir)
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
 	}
@@ -82,14 +82,6 @@ func TestNew_EmptyStore(t *testing.T) {
 	}
 }
 
-func TestNew_RegistersIndexes(t *testing.T) {
-	store := newTestStore(t)
-	names := store.IndexNames()
-	if len(names) != 2 {
-		t.Fatalf("expected 2 indexes, got %d: %v", len(names), names)
-	}
-}
-
 func TestNew_PersistsAcrossReload(t *testing.T) {
 	dir, err := os.MkdirTemp("", "hatcheck-meta-*")
 	if err != nil {
@@ -97,7 +89,7 @@ func TestNew_PersistsAcrossReload(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	store, err := New(dir, &TagIndex{}, &DateIndex{})
+	store, err := New(dir)
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
 	}
@@ -106,7 +98,8 @@ func TestNew_PersistsAcrossReload(t *testing.T) {
 		t.Fatalf("Append() error: %v", err)
 	}
 
-	store2, err := New(dir, &TagIndex{}, &DateIndex{})
+	// Reload from the same directory.
+	store2, err := New(dir)
 	if err != nil {
 		t.Fatalf("New() reload error: %v", err)
 	}
@@ -116,23 +109,6 @@ func TestNew_PersistsAcrossReload(t *testing.T) {
 	}
 	if store2.Log[0].Hash != "abc123" {
 		t.Errorf("expected hash abc123, got %s", store2.Log[0].Hash)
-	}
-}
-
-func TestNew_RebuildIndexesOnReload(t *testing.T) {
-	dir, err := os.MkdirTemp("", "hatcheck-meta-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(dir)
-
-	store, _ := New(dir, &TagIndex{}, &DateIndex{})
-	store.Append("hash1", 10, "Note #ideas")
-
-	store2, _ := New(dir, &TagIndex{}, &DateIndex{})
-	results := store2.Query("tag", "ideas")
-	if len(results) != 1 {
-		t.Errorf("expected tag index rebuilt after reload, got %d results", len(results))
 	}
 }
 
@@ -180,125 +156,99 @@ func TestAppend_SameHashTwice(t *testing.T) {
 	}
 }
 
-// --- Query ---
+// --- QueryByTag ---
 
-func TestQuery_ByTag_ReturnsMatches(t *testing.T) {
+func TestQueryByTag_ReturnsMatches(t *testing.T) {
 	store := newTestStore(t)
 	store.Append("hash1", 10, "Note about #ideas")
 	store.Append("hash2", 10, "Another #ideas note")
 	store.Append("hash3", 10, "Unrelated content")
 
-	results := store.Query("tag", "ideas")
+	results := store.QueryByTag("ideas")
 	if len(results) != 2 {
 		t.Errorf("expected 2 results for tag 'ideas', got %d: %v", len(results), results)
 	}
 }
 
-func TestQuery_ByTag_CaseInsensitive(t *testing.T) {
+func TestQueryByTag_CaseInsensitive(t *testing.T) {
 	store := newTestStore(t)
 	store.Append("hash1", 10, "Note about #Ideas")
 
-	results := store.Query("tag", "ideas")
+	results := store.QueryByTag("ideas")
 	if len(results) != 1 {
 		t.Errorf("expected 1 result querying 'ideas' for content tagged #Ideas, got %d", len(results))
 	}
 }
 
-func TestQuery_ByTag_NoMatches(t *testing.T) {
+func TestQueryByTag_NoMatches(t *testing.T) {
 	store := newTestStore(t)
 	store.Append("hash1", 10, "Note about #ideas")
 
-	results := store.Query("tag", "nonexistent")
+	results := store.QueryByTag("nonexistent")
 	if len(results) != 0 {
 		t.Errorf("expected 0 results, got %d", len(results))
 	}
 }
 
-func TestQuery_ByTag_NoDuplicates(t *testing.T) {
+func TestQueryByTag_NoDuplicates(t *testing.T) {
 	store := newTestStore(t)
+	// Stash the same hash twice with the same tag.
 	store.Append("hash1", 10, "Note #ideas")
 	store.Append("hash1", 10, "Note #ideas again")
 
-	results := store.Query("tag", "ideas")
+	results := store.QueryByTag("ideas")
 	if len(results) != 1 {
 		t.Errorf("expected 1 unique result, got %d: %v", len(results), results)
 	}
 }
 
-func TestQuery_ByDate_ReturnsMatches(t *testing.T) {
+// --- QueryByDate ---
+
+func TestQueryByDate_ReturnsMatches(t *testing.T) {
 	store := newTestStore(t)
 	store.Append("hash1", 10, "Today's note")
 	store.Append("hash2", 10, "Another note today")
 
 	today := time.Now().UTC().Format("2006-01-02")
-	results := store.Query("date", today)
+	results := store.QueryByDate(today)
 	if len(results) != 2 {
 		t.Errorf("expected 2 results for today, got %d", len(results))
 	}
 }
 
-func TestQuery_ByDate_NoMatches(t *testing.T) {
+func TestQueryByDate_NoMatches(t *testing.T) {
 	store := newTestStore(t)
 	store.Append("hash1", 10, "Some note")
 
-	results := store.Query("date", "1999-01-01")
+	results := store.QueryByDate("1999-01-01")
 	if len(results) != 0 {
 		t.Errorf("expected 0 results for past date, got %d", len(results))
 	}
 }
 
-func TestQuery_UnknownIndex(t *testing.T) {
+// --- QueryByTagAndDate ---
+
+func TestQueryByTagAndDate_Intersection(t *testing.T) {
 	store := newTestStore(t)
-	store.Append("hash1", 10, "Some note #ideas")
+	store.Append("hash1", 10, "Note #ideas today")
+	store.Append("hash2", 10, "Note #notes today")
+	store.Append("hash3", 10, "Note #ideas today")
 
-	results := store.Query("nonexistent", "ideas")
+	today := time.Now().UTC().Format("2006-01-02")
+	results := store.QueryByTagAndDate("ideas", today)
+	if len(results) != 2 {
+		t.Errorf("expected 2 results, got %d: %v", len(results), results)
+	}
+}
+
+func TestQueryByTagAndDate_NoIntersection(t *testing.T) {
+	store := newTestStore(t)
+	store.Append("hash1", 10, "Note #ideas today")
+
+	results := store.QueryByTagAndDate("ideas", "1999-01-01")
 	if len(results) != 0 {
-		t.Errorf("expected 0 results for unknown index, got %d", len(results))
+		t.Errorf("expected 0 results, got %d", len(results))
 	}
-}
-
-func TestQuery_CustomIndex(t *testing.T) {
-	dir, err := os.MkdirTemp("", "hatcheck-meta-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(dir)
-
-	// Register a custom size index alongside the built-ins.
-	store, err := New(dir, &TagIndex{}, &DateIndex{}, &sizeIndex{})
-	if err != nil {
-		t.Fatalf("New() error: %v", err)
-	}
-
-	store.Append("hash1", 5, "Small")
-	store.Append("hash2", 100, "Large content here")
-
-	results := store.Query("size", "small")
-	if len(results) != 1 || results[0] != "hash1" {
-		t.Errorf("expected [hash1] from custom size index, got %v", results)
-	}
-}
-
-// sizeIndex is a test-only custom index that classifies objects as "small" (<10 bytes) or "large".
-type sizeIndex struct {
-	data map[string][]string
-}
-
-func (s *sizeIndex) Name() string { return "size" }
-
-func (s *sizeIndex) Add(entry Entry) {
-	if s.data == nil {
-		s.data = make(map[string][]string)
-	}
-	key := "large"
-	if entry.Size < 10 {
-		key = "small"
-	}
-	s.data[key] = appendUnique(s.data[key], entry.Hash)
-}
-
-func (s *sizeIndex) Query(key string) []string {
-	return s.data[key]
 }
 
 // --- TagsForHash ---
