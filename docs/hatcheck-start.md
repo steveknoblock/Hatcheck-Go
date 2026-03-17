@@ -17,7 +17,7 @@ The types of object and kinds of operations are not completely symmetrical. Obje
 
 ## Operations
 
-Access to Hatcheck data is made through four basic operations.
+Access to Hatcheck data is made through four basic operations. All four operations store plain text in the CAS.
 
 ### Name
 
@@ -146,5 +146,41 @@ The data types supported by Hatcheck are different interpretations of JSON data.
 
 ## Event Sourcing
 
+Event sourcing is a pattern from software architecture where instead of storing the current state of something, the sequence of events that led to that state are stored. The current state is derived by replaying the events.
+
+The name comes from the idea that events are the source of truth — not the current state. The state is just a projection, a convenience computed from the event log.
+
+An example is a bank account. Instead of storing a single balance:
+
+balance: $450
+
+You store every transaction:
+
+opened:     $0
+deposited:  $500
+withdrew:   $50
+
+The balance of $450 is derived by replaying the events. If you need the balance at any point in the past you just replay up to that point.
+It has a long history — accounting ledgers have worked this way for centuries. You never erase an entry, you only add new ones. An audit trail is a natural byproduct.
+
+For Hatcheck it maps naturally — each stash is an event, the metadata index is the current state derived from replaying those events. The log is the single source of truth.
+
 ## Index Plugins
 
+That's one of the powerful properties of event sourcing — you can build as many projections as you need from the same log. The log is the source of truth and the indexes are just different views over it.
+
+Two indexes built on startup by replaying the log:
+Tags to objects — for querying by tag:
+gotagIndex map[string][]string
+// tagIndex["ideas"] = ["a1b2c3", "d4e5f6", "g7h8i9"]
+Date to objects — for querying by when tags were assigned:
+godateIndex map[string][]string
+// dateIndex["2026-03-12"] = ["a1b2c3", "d4e5f6"]
+You could query either independently or combine them:
+
+All objects tagged #ideas — use tagIndex
+All objects stashed today — use dateIndex
+All objects tagged #ideas stashed this week — intersect both results
+
+And later if you think of another useful projection — say an index by content size, or by which tags co-occur — you just add another index built from the same log. You don't change the log format or lose any history.
+This is essentially what a database does internally when you add an index to a table — it builds a separate data structure optimized for a specific query pattern.
