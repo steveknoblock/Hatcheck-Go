@@ -6,10 +6,35 @@ Simplicity, conciseness, and minimalism are goals Hatcheck tries to satisfy. The
 
 Data is stored in an Object, for which the value cannot be changed or removed from the store. A new “version” of the object is stored the same as any other object, and alongside any other objects. Immutable data has many advantages. A value returned from the store is independent of any other value. The CAS does not know about or store any kind of state. Hatcheck does allow storing some state, such as a Name, which can be changed. The CAS and the metadata are both immutable. The CAS by its nature, and the metadata by its log format. Every change leaves the previous data untouched and a history of changes exists in the metadata.
 
+There are two important stores of data. The object store and the metadata store.
+
+## Content Addressable Store
+
+The Content Addressable Store provides persistence for objects. Objects are immutable. Each time you stash an object to the store, a new object is created by hashing the data. The hash is returned to the user.
+
+For example, if you Stash some text and then it changes and you Stash the new text, a new object is created. It is up to the user of the application making requests to create a  document.
+
+The CAS itself remains completely independent of the metadata system and the web server. It just stores and retrieves text by hash. The meaning of the content is interpreted by the metadata layer and the application.
+
+The data types supported by Hatcheck are different interpretations of JSON data. Currently supported types are: Object, Collection, and Relation.
+
+
+
 ## Metadata
+
+The objects in the Content Addressable Store are plain text, addressed by hash, and do not contain metadata (except for tags).
+
+Everything else — names, relations, collections, timestamps — lives entirely in the log. The objects in the CAS remain unaware of any of it.
+
+## Event Log
+
+Every Hatcheck operation is written to a log.
+
+At runtime when the server starts, the metadata log is replayed and the NameIndex is built in memory alongside the TagIndex, DateIndex, and RelationIndex (and any other additional index defined by a plugin). From that point on all four indexes coexist in memory and can be queried together, even though their origins are different — tags and dates come from stash entries, names come from name entries, relations from relation entries.
 
 ### Tags
 
+Objects are organized in metadata by tags.
 
 ## Composability
 
@@ -19,25 +44,80 @@ The types of object and kinds of operations are not completely symmetrical. Obje
 
 ## Operations
 
-Access to Hatcheck data is made through four basic operations. All four operations store plain text in the CAS.
+Hatcheck provides four basic operations to store and organize information. The operations give you the building blocks organize any kind of content.
 
-### Name
+* Stash (Object)
+* Collection
+* Relation
+* Name
 
-A metadata label giving a name to another object containing a reference to the named object. A name is mutable, meaning you can update it making another entry that will override any previous entries. It is the only mutable value in Hatcheck (with the exception of tags, which are a different story TODO explain).
+The first three basic operations store plain text in the Content Addressable Store and the fourth operation stores names for objects in the log. Names can be changed (are mutable, unlike objects, collections, and relations).
 
-A name gives a persistent human readable handle for referencing an object in the metadata store.
+Objects, Collections, and Relations are data, and Names are metadata.
 
-### Object
+### Stash (Object)
 
-An object. Expects plain text by default, but can be JSON.
+A Stash creates a plain text object in the Object Store.
 
 ### Collection
 
-An object containing a list of references to objects. Expects JSON.
+An object containing a list of references to objects. Expects a JSON array of hashes. For example:
+
+```
+["a1b2c3", "d4e5f6"]
+```
 
 ### Relation
 
-An object expressing a relation between objects. Expects JSON.
+An object expressing a relation between objects. Expects a JSON object. For example, an object serving as context for another object:
+
+```
+{
+    "from": "a1b2c3", 
+    "rel": "contextualizes",
+    "to": "d4e5f6"
+}
+```
+
+### Name
+
+A Name creates a persistent, but changeable, human readable handle for an object in the Object Store. It contains a plain text label for the object and the hash of the object it labels. 
+
+Names are mutable, meaning you can update a name by making another entry in the Event Log that will override any previous entries.
+
+It is the only mutable value in Hatcheck (with the exception of tags, which are a different story TODO explain).
+
+## Data Structures
+
+### Object
+
+An Object is the basic unit of storage in the CAS. It is defined by default to be plain text. Everything in the store (persistence layer) is an object (except for a Name, which is metadata and only stored in the Event Log).
+
+The other data types are Objects containing different kinds of JSON data that help with organizing objects in the store.
+
+### Collection
+
+A Collection is a JSON array of object identifiers (hashes). 
+
+```
+["a1b2c3", "d4e5f6"]
+```
+
+### Relation
+
+A Relation is a JSON object containing identifiers for two related objects and a text label for describing the kind of relationship.
+```
+{
+    "from": "a1b2c3",
+    "rel": "contextualizes",
+    "to": "d4e5f6"
+}
+```
+### Name
+
+A Name is a label that provides a human-readable label for any kind of object and is not stored in the CAS, but exists only in the metadata log.
+
+_Important!_ Names are labels maintained by the metadata system. To preserve naming the metadata would have to be exported with the objects.
 
 ## Common Data Structures
 
@@ -97,54 +177,6 @@ Create Collection with hashes of all objects in collection.
 Create Name
 Returns hash identifier to point to the collection.
 
-
-## Data Structures
-
-### Object
-
-An Object is the basic unit of storage in the CAS. It is assumed to be a text object. Everything in the store (persistence layer) is an object (except for a Name).
-
-The other data types are Objects containing different kinds of JSON data that help with organizing objects in the store.
-
-### Collection
-
-A Collection is a JSON array of object identifiers (hashes). 
-
-```
-["a1b2c3", "d4e5f6"]
-```
-
-### Relation
-
-A Relation is a JSON object containing identifiers for two related objects and a text label for describing the kind of relationship.
-```
-{
-    "from": "a1b2c3",
-    "rel": "contextualizes",
-    "to": "d4e5f6"
-}
-```
-### Name
-
-A Name is a label that provides a human-readable label for any kind of object and is not stored in the CAS, but exists only in the metadata log.
-
-_Important!_ Names are labels maintained by the metadata system. To preserve naming the metadata would have to be exported with the objects.
-
-## Tags
-
-Objects are organized in metadata by tags.
-
-## Content Addressable Store
-
-The Content Addressable Store provides persistence for objects. Objects are immutable. Each time you stash an object to the store, a new object is created by hashing the data. The hash is returned to the user.
-
-For example, if you Stash some text and then it changes and you Stash the new text, a new object is created. It is up to the user of the application making requests to create a  document.
-
-The CAS itself remains completely independent of the metadata system and the web server. It just stores and retrieves text by hash. The meaning of the content is interpreted by the metadata layer and the application.
-
-The data types supported by Hatcheck are different interpretations of JSON data. Currently supported types are: Object, Collection, and Relation.
-
-## Metadata
 
 ## Event Sourcing
 
