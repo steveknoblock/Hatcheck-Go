@@ -261,11 +261,13 @@ func runQuery(args []string, metaPath string) {
 func runExport(args []string, objPath, metaPath string) {
 	fs := flag.NewFlagSet("export", flag.ExitOnError)
 	source := fs.String("source", "", "Source identifier (required)")
+	name := fs.String("name", "", "Export only objects reachable from this name (optional)")
 	outFile := fs.String("o", "", "Output file (default: <source>.tar.gz)")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: hatcheck export -source <name> [-o <file>]")
 		fmt.Fprintln(os.Stderr, "Examples:")
 		fmt.Fprintln(os.Stderr, "  hatcheck export -source bob")
+		fmt.Fprintln(os.Stderr, "  hatcheck export -source bob -name my-document")
 		fmt.Fprintln(os.Stderr, "  hatcheck export -source bob -o my-export.tar.gz")
 		fs.PrintDefaults()
 	}
@@ -277,7 +279,7 @@ func runExport(args []string, objPath, metaPath string) {
 		os.Exit(1)
 	}
 
-	if err := share.Export(objPath, metaPath, *source, *outFile); err != nil {
+	if err := share.Export(objPath, metaPath, *source, *name, *outFile); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}

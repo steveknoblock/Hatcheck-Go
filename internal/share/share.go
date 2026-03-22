@@ -18,30 +18,30 @@ type Manifest struct {
 	Exported time.Time `json:"exported"`
 	Version  string    `json:"version"`
 	Objects  int       `json:"objects"`
+	Name     string    `json:"name,omitempty"` // set for partial exports
 }
 
 const manifestVersion = "1"
 
 // Export bundles the CAS objects and metadata log into a tar.gz archive.
+// If name is non-empty only the objects reachable from that name are exported.
 // The output file is named <source>.tar.gz unless outPath is specified.
-func Export(objPath, metaPath, source, outPath string) error {
+func Export(objPath, metaPath, source, name, outPath string) error {
 	if outPath == "" {
 		outPath = source + ".tar.gz"
 	}
 
-	// Count objects for the manifest.
-	objectCount := 0
-	err := filepath.Walk(objPath, func(path string, info os.FileInfo, err error) error {
+	// Determine which hashes to export.
+	var hashes map[string]bool
+	if name != "" {
+		var err error
+		hashes, err = reachableHashes(name, objPath, metaPath)
 		if err != nil {
-			return err
+			return fmt.Errorf("resolving name %q: %w", name, err)
 		}
-		if !info.IsDir() {
-			objectCount++
+		if len(hashes) == 0 {
+			return fmt.Errorf("name %q not found or has no reachable objects", name)
 		}
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("counting objects: %w", err)
 	}
 
 	// Create the output file.
@@ -57,12 +57,51 @@ func Export(objPath, metaPath, source, outPath string) error {
 	tw := tar.NewWriter(gz)
 	defer tw.Close()
 
+	// Collect objects to export.
+	type objectEntry struct {
+		archivePath string
+		diskPath    string
+		info        os.FileInfo
+	}
+	var objects []objectEntry
+
+	err = filepath.Walk(objPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		shard := filepath.Base(filepath.Dir(path))
+		file := filepath.Base(path)
+		hash := shard + file
+
+		if hashes != nil && !hashes[hash] {
+			return nil // skip — not reachable from the named root
+		}
+
+		rel, err := filepath.Rel(objPath, path)
+		if err != nil {
+			return err
+		}
+		objects = append(objects, objectEntry{
+			archivePath: filepath.Join("objects", rel),
+			diskPath:    path,
+			info:        info,
+		})
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("walking objects: %w", err)
+	}
+
 	// Write manifest.
 	manifest := Manifest{
 		Source:   source,
 		Exported: time.Now().UTC(),
 		Version:  manifestVersion,
-		Objects:  objectCount,
+		Objects:  len(objects),
+		Name:     name,
 	}
 	manifestData, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -72,33 +111,29 @@ func Export(objPath, metaPath, source, outPath string) error {
 		return fmt.Errorf("writing manifest: %w", err)
 	}
 
-	// Write CAS objects preserving shard structure.
-	err = filepath.Walk(objPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
+	// Write CAS objects.
+	for _, obj := range objects {
+		if err := writeFile(tw, obj.archivePath, obj.diskPath, obj.info); err != nil {
+			return fmt.Errorf("writing object: %w", err)
 		}
-		if info.IsDir() {
-			return nil
-		}
-		// Preserve relative path within the archive as objects/<shard>/<file>
-		rel, err := filepath.Rel(objPath, path)
-		if err != nil {
-			return err
-		}
-		return writeFile(tw, filepath.Join("objects", rel), path, info)
-	})
-	if err != nil {
-		return fmt.Errorf("writing objects: %w", err)
 	}
 
-	// Write metadata log.
-	logPath := filepath.Join(metaPath, "log.json")
-	logInfo, err := os.Stat(logPath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("checking log: %w", err)
+	// Write metadata log — full log for full export, filtered for partial.
+	logEntries, err := readLog(metaPath)
+	if err != nil {
+		return fmt.Errorf("reading log: %w", err)
 	}
-	if err == nil {
-		if err := writeFile(tw, "metadata/log.json", logPath, logInfo); err != nil {
+
+	if hashes != nil {
+		logEntries = filterLog(logEntries, hashes, name)
+	}
+
+	if len(logEntries) > 0 {
+		logData, err := json.MarshalIndent(logEntries, "", "  ")
+		if err != nil {
+			return fmt.Errorf("encoding log: %w", err)
+		}
+		if err := writeBytes(tw, "metadata/log.json", logData); err != nil {
 			return fmt.Errorf("writing log: %w", err)
 		}
 	}
@@ -127,7 +162,6 @@ func Import(archivePath, objPath, metaPath string) error {
 	var manifest *Manifest
 	var logEntries []json.RawMessage
 
-	// First pass — read manifest and log, write objects.
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -158,7 +192,6 @@ func Import(archivePath, objPath, metaPath string) error {
 			}
 
 		default:
-			// CAS object — write only if it doesn't already exist.
 			if !strings.HasPrefix(hdr.Name, "objects/") {
 				continue
 			}
@@ -166,8 +199,7 @@ func Import(archivePath, objPath, metaPath string) error {
 			destPath := filepath.Join(objPath, rel)
 
 			if _, err := os.Stat(destPath); err == nil {
-				// Already exists — skip.
-				continue
+				continue // already exists — skip
 			}
 
 			if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
@@ -192,7 +224,6 @@ func Import(archivePath, objPath, metaPath string) error {
 		return nil
 	}
 
-	// Apply namespace prefix to name labels and merge into destination log.
 	prefixed, err := prefixNameLabels(logEntries, manifest.Source)
 	if err != nil {
 		return fmt.Errorf("prefixing name labels: %w", err)
@@ -203,6 +234,184 @@ func Import(archivePath, objPath, metaPath string) error {
 	}
 
 	return nil
+}
+
+// --- Reachability ---
+
+// reachableHashes returns the set of all hashes reachable from a named root.
+// It follows Collections and Relations recursively with cycle detection.
+func reachableHashes(name, objPath, metaPath string) (map[string]bool, error) {
+	// Resolve name to root hash via the name index in the log.
+	rootHash, err := resolveNameFromLog(name, metaPath)
+	if err != nil {
+		return nil, err
+	}
+
+	visited := make(map[string]bool)
+	if err := traverse(rootHash, objPath, visited); err != nil {
+		return nil, err
+	}
+	return visited, nil
+}
+
+// traverse recursively visits a hash and all hashes reachable from it.
+func traverse(hash, objPath string, visited map[string]bool) error {
+	if visited[hash] {
+		return nil // already visited — cycle detected, stop
+	}
+	visited[hash] = true
+
+	// Read the object content.
+	content, err := readObject(hash, objPath)
+	if err != nil {
+		return err
+	}
+
+	// Try to parse as a Collection — JSON array of strings.
+	var collection []string
+	if err := json.Unmarshal([]byte(content), &collection); err == nil {
+		for _, h := range collection {
+			if err := traverse(h, objPath, visited); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	// Try to parse as a Relation — JSON object with from/rel/to.
+	var relation struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}
+	if err := json.Unmarshal([]byte(content), &relation); err == nil {
+		if relation.From != "" {
+			if err := traverse(relation.From, objPath, visited); err != nil {
+				return err
+			}
+		}
+		if relation.To != "" {
+			if err := traverse(relation.To, objPath, visited); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	// Plain object — already added to visited, nothing to recurse into.
+	return nil
+}
+
+// readObject reads the content of a CAS object by hash.
+func readObject(hash, objPath string) (string, error) {
+	shard := hash[0:2]
+	file := hash[2:]
+	path := filepath.Join(objPath, shard, file)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("reading object %s: %w", hash, err)
+	}
+	return string(data), nil
+}
+
+// resolveNameFromLog finds the most recent hash for a name label in the log.
+func resolveNameFromLog(name, metaPath string) (string, error) {
+	entries, err := readLog(metaPath)
+	if err != nil {
+		return "", err
+	}
+
+	type envelope struct {
+		Op      string          `json:"op"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	type namePayload struct {
+		Label string `json:"label"`
+		Hash  string `json:"hash"`
+	}
+
+	// Walk in reverse to find most recent entry for this name.
+	for i := len(entries) - 1; i >= 0; i-- {
+		var env envelope
+		if err := json.Unmarshal(entries[i], &env); err != nil {
+			continue
+		}
+		if env.Op != "name-create" && env.Op != "name-update" {
+			continue
+		}
+		var p namePayload
+		if err := json.Unmarshal(env.Payload, &p); err != nil {
+			continue
+		}
+		if p.Label == name {
+			return p.Hash, nil
+		}
+	}
+
+	return "", fmt.Errorf("name %q not found", name)
+}
+
+// filterLog returns only log entries relevant to the given hash set and name.
+func filterLog(entries []json.RawMessage, hashes map[string]bool, name string) []json.RawMessage {
+	type envelope struct {
+		Op      string          `json:"op"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	type hashPayload struct {
+		Hash string `json:"hash"`
+	}
+	type namePayload struct {
+		Label string `json:"label"`
+		Hash  string `json:"hash"`
+	}
+
+	var result []json.RawMessage
+
+	for _, raw := range entries {
+		var env envelope
+		if err := json.Unmarshal(raw, &env); err != nil {
+			continue
+		}
+
+		switch env.Op {
+		case "stash", "collection", "relation":
+			var p hashPayload
+			if err := json.Unmarshal(env.Payload, &p); err != nil {
+				continue
+			}
+			if hashes[p.Hash] {
+				result = append(result, raw)
+			}
+
+		case "name-create", "name-update":
+			var p namePayload
+			if err := json.Unmarshal(env.Payload, &p); err != nil {
+				continue
+			}
+			if p.Label == name {
+				result = append(result, raw)
+			}
+		}
+	}
+
+	return result
+}
+
+// --- Log helpers ---
+
+func readLog(metaPath string) ([]json.RawMessage, error) {
+	logPath := filepath.Join(metaPath, "log.json")
+	data, err := os.ReadFile(logPath)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var entries []json.RawMessage
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, err
+	}
+	return entries, nil
 }
 
 // prefixNameLabels applies "<source>/" prefix to name-create and name-update labels.
@@ -256,7 +465,6 @@ func mergeLog(metaPath string, entries []json.RawMessage) error {
 
 	logPath := filepath.Join(metaPath, "log.json")
 
-	// Load existing log.
 	var existing []json.RawMessage
 	data, err := os.ReadFile(logPath)
 	if err != nil && !os.IsNotExist(err) {
@@ -268,7 +476,6 @@ func mergeLog(metaPath string, entries []json.RawMessage) error {
 		}
 	}
 
-	// Append new entries.
 	merged := append(existing, entries...)
 
 	out, err := json.MarshalIndent(merged, "", "  ")
@@ -279,7 +486,8 @@ func mergeLog(metaPath string, entries []json.RawMessage) error {
 	return os.WriteFile(logPath, out, 0644)
 }
 
-// writeFile adds a file from disk to the tar archive.
+// --- Tar helpers ---
+
 func writeFile(tw *tar.Writer, name, path string, info os.FileInfo) error {
 	hdr := &tar.Header{
 		Name:    name,
@@ -299,7 +507,6 @@ func writeFile(tw *tar.Writer, name, path string, info os.FileInfo) error {
 	return err
 }
 
-// writeBytes adds raw bytes as a file in the tar archive.
 func writeBytes(tw *tar.Writer, name string, data []byte) error {
 	hdr := &tar.Header{
 		Name:    name,
