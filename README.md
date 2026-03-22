@@ -17,7 +17,7 @@ Hatcheck comes with a user interface for adding content to the object store, inc
 ## Object Store API
 
 Hatcheck exposes a RESTful, web API, enabling communication with the object store over HTTP requests.
-
+    
 On the first request to store an object the objects/ folder will be automatically created in the application root folder.
 
 ### Endpoints
