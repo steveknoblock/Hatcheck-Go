@@ -9,6 +9,7 @@ import (
 
 	"github.com/steveknoblock/hatcheck-go/internal/cas"
 	"github.com/steveknoblock/hatcheck-go/internal/metadata"
+	"github.com/steveknoblock/hatcheck-go/internal/share"
 )
 
 const usage = `Hatcheck - Content Addressable Store
@@ -21,6 +22,8 @@ Commands:
   fetch     Retrieve content by hash
   list      List all objects in the store
   query     Query objects by index and key
+  export    Export objects and metadata to a shareable archive
+  import    Import objects and metadata from an archive
 
 Options:
   -data     Path to objects directory (default: ./objects)
@@ -54,6 +57,10 @@ func main() {
 		runList(os.Args[2:], objPath, metaPath)
 	case "query":
 		runQuery(os.Args[2:], metaPath)
+	case "export":
+		runExport(os.Args[2:], objPath, metaPath)
+	case "import":
+		runImport(os.Args[2:], objPath, metaPath)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", os.Args[1])
 		fmt.Fprint(os.Stderr, usage)
@@ -247,4 +254,66 @@ func runQuery(args []string, metaPath string) {
 	for _, h := range hashes {
 		fmt.Println(h)
 	}
+}
+
+// --- export ---
+
+func runExport(args []string, objPath, metaPath string) {
+	fs := flag.NewFlagSet("export", flag.ExitOnError)
+	source := fs.String("source", "", "Source identifier (required)")
+	name := fs.String("name", "", "Export only objects reachable from this name (optional)")
+	outFile := fs.String("o", "", "Output file (default: <source>.tar.gz)")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: hatcheck export -source <name> [-o <file>]")
+		fmt.Fprintln(os.Stderr, "Examples:")
+		fmt.Fprintln(os.Stderr, "  hatcheck export -source bob")
+		fmt.Fprintln(os.Stderr, "  hatcheck export -source bob -name my-document")
+		fmt.Fprintln(os.Stderr, "  hatcheck export -source bob -o my-export.tar.gz")
+		fs.PrintDefaults()
+	}
+	fs.Parse(args)
+
+	if *source == "" {
+		fmt.Fprintln(os.Stderr, "error: -source is required")
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	if err := share.Export(objPath, metaPath, *source, *name, *outFile); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	outPath := *outFile
+	if outPath == "" {
+		outPath = *source + ".tar.gz"
+	}
+	fmt.Printf("exported to %s\n", outPath)
+}
+
+// --- import ---
+
+func runImport(args []string, objPath, metaPath string) {
+	fs := flag.NewFlagSet("import", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: hatcheck import <archive>")
+		fmt.Fprintln(os.Stderr, "Examples:")
+		fmt.Fprintln(os.Stderr, "  hatcheck import bob.tar.gz")
+		fs.PrintDefaults()
+	}
+	fs.Parse(args)
+
+	if fs.NArg() < 1 {
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	archivePath := fs.Arg(0)
+
+	if err := share.Import(archivePath, objPath, metaPath); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("imported from %s\n", archivePath)
 }

@@ -296,6 +296,29 @@ func (s *Store) TagsForHash(hash string) []string {
 	return []string{}
 }
 
+// NameEntry holds a label and the hash it points to.
+type NameEntry struct {
+	Label string `json:"label"`
+	Hash  string `json:"hash"`
+}
+
+// NamesInNamespace returns all Names whose label starts with namespace+"/".
+// The namespace prefix is stripped from the returned labels.
+func (s *Store) NamesInNamespace(namespace string) []NameEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	prefix := namespace + "/"
+	for _, idx := range s.indexes {
+		if idx.Name() == "name" {
+			if ni, ok := idx.(*NameIndex); ok {
+				return ni.ListNamespace(prefix)
+			}
+		}
+	}
+	return []NameEntry{}
+}
+
 // IndexNames returns the names of all registered indexes.
 func (s *Store) IndexNames() []string {
 	names := make([]string, len(s.indexes))
@@ -405,6 +428,21 @@ func (n *NameIndex) Query(key string) []string {
 		return []string{hash}
 	}
 	return []string{}
+}
+
+// ListNamespace returns all label/hash pairs whose label starts with prefix.
+// The prefix is stripped from the returned labels.
+func (n *NameIndex) ListNamespace(prefix string) []NameEntry {
+	var results []NameEntry
+	for label, hash := range n.data {
+		if strings.HasPrefix(label, prefix) {
+			results = append(results, NameEntry{
+				Label: strings.TrimPrefix(label, prefix),
+				Hash:  hash,
+			})
+		}
+	}
+	return results
 }
 
 // RelationIndex maps hashes to their relations.
