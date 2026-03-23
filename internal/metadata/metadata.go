@@ -319,6 +319,21 @@ func (s *Store) NamesInNamespace(namespace string) []NameEntry {
 	return []NameEntry{}
 }
 
+// Namespaces returns all unique namespace prefixes across all Names.
+func (s *Store) Namespaces() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, idx := range s.indexes {
+		if idx.Name() == "name" {
+			if ni, ok := idx.(*NameIndex); ok {
+				return ni.Namespaces()
+			}
+		}
+	}
+	return []string{}
+}
+
 // IndexNames returns the names of all registered indexes.
 func (s *Store) IndexNames() []string {
 	names := make([]string, len(s.indexes))
@@ -443,6 +458,26 @@ func (n *NameIndex) ListNamespace(prefix string) []NameEntry {
 		}
 	}
 	return results
+}
+
+// Namespaces returns all unique namespace prefixes found in the name index.
+// A namespace is the portion of a label before the first "/".
+// Labels without a "/" are returned as-is as their own namespace.
+func (n *NameIndex) Namespaces() []string {
+	seen := make(map[string]bool)
+	for label := range n.data {
+		slash := strings.Index(label, "/")
+		if slash >= 0 {
+			seen[label[:slash]] = true
+		} else {
+			seen[label] = true
+		}
+	}
+	result := make([]string, 0, len(seen))
+	for ns := range seen {
+		result = append(result, ns)
+	}
+	return result
 }
 
 // RelationIndex maps hashes to their relations.

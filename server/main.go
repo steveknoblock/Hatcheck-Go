@@ -130,6 +130,23 @@ func queryHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store
 	json.NewEncoder(w).Encode(hashes)
 }
 
+// namespacesHandler returns all unique namespace prefixes in the name index.
+// GET /namespaces
+func namespacesHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store) {
+	if req.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	namespaces := meta.Namespaces()
+	if namespaces == nil {
+		namespaces = []string{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(namespaces)
+}
+
 // namesHandler returns all Names in a namespace with the prefix stripped.
 // GET /names?namespace=bob
 func namesHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store) {
@@ -264,6 +281,9 @@ func main() {
 	})
 	http.HandleFunc("/query", func(w http.ResponseWriter, req *http.Request) {
 		queryHandler(w, req, meta)
+	})
+	http.HandleFunc("/namespaces", func(w http.ResponseWriter, req *http.Request) {
+		namespacesHandler(w, req, meta)
 	})
 	http.HandleFunc("/names", func(w http.ResponseWriter, req *http.Request) {
 		namesHandler(w, req, meta)
