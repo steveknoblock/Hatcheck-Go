@@ -36,7 +36,6 @@
             display: flex;
             align-items: center;
             padding: 0 16px;
-            gap: 16px;
             flex-shrink: 0;
             z-index: 10;
         }
@@ -54,8 +53,10 @@
             display: flex;
             align-items: center;
             gap: 6px;
-            flex: 1;
-            max-width: 280px;
+            padding: 8px 10px;
+            border-bottom: 1px solid var(--border);
+            position: relative;
+            flex-shrink: 0;
         }
 
         .ns-label {
@@ -72,13 +73,43 @@
             border: 1px solid var(--border);
             color: var(--text);
             font-family: var(--mono);
-            font-size: 12px;
-            padding: 4px 8px;
+            font-size: 11px;
+            padding: 4px 7px;
             outline: none;
             transition: border-color 0.15s;
+            min-width: 0;
         }
 
         .ns-input:focus { border-color: var(--accent); }
+
+        .ns-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-top: none;
+            z-index: 100;
+            display: none;
+            max-height: 160px;
+            overflow-y: auto;
+        }
+
+        .ns-dropdown.visible { display: block; }
+
+        .ns-option {
+            padding: 6px 10px;
+            font-size: 11px;
+            color: var(--text-dim);
+            cursor: pointer;
+            transition: all 0.1s;
+        }
+
+        .ns-option:hover, .ns-option.selected {
+            background: rgba(200,240,75,0.08);
+            color: var(--accent);
+        }
 
         .ns-go {
             padding: 4px 10px;
@@ -376,11 +407,6 @@
 
 <header>
     <h1>Hatcheck</h1>
-    <div class="ns-input-wrap">
-        <span class="ns-label">ns</span>
-        <input class="ns-input" id="ns-input" type="text" placeholder="namespace" value="">
-        <button class="ns-go" onclick="loadNamespace()">Go</button>
-    </div>
     <div class="header-right">
         <button class="btn btn-ghost" onclick="newObject()" title="New object in current namespace">+ New</button>
         <div class="status">
@@ -392,6 +418,16 @@
 
 <div class="workspace">
     <div class="panel-left" id="panel-left">
+        <div class="ns-input-wrap">
+            <span class="ns-label">ns</span>
+            <input class="ns-input" id="ns-input" type="text" placeholder="namespace"
+                   autocomplete="off"
+                   oninput="onNsInput(this.value)"
+                   onfocus="onNsFocus()"
+                   onblur="onNsBlur()">
+            <div class="ns-dropdown" id="ns-dropdown"></div>
+            <button class="ns-go" onclick="loadNamespace()">Go</button>
+        </div>
         <div class="panel-header">
             <span class="panel-label" id="panel-title">Names</span>
             <span class="panel-count" id="panel-count">—</span>
@@ -468,6 +504,59 @@ document.addEventListener('mouseup', () => {
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
 });
+
+// ── Namespace autocomplete ──
+let allNamespaces = [];
+let nsSelectedIndex = -1;
+
+async function fetchNamespaces() {
+    try {
+        const res = await fetch(`${API}/namespaces`);
+        if (res.ok) allNamespaces = await res.json();
+    } catch(e) {}
+}
+
+function onNsFocus() {
+    fetchNamespaces().then(() => renderNsDropdown(document.getElementById('ns-input').value));
+}
+
+function onNsInput(val) {
+    nsSelectedIndex = -1;
+    renderNsDropdown(val);
+}
+
+function renderNsDropdown(val) {
+    const dropdown = document.getElementById('ns-dropdown');
+    const filtered = val
+        ? allNamespaces.filter(ns => ns.toLowerCase().startsWith(val.toLowerCase()))
+        : allNamespaces;
+
+    if (filtered.length === 0) {
+        dropdown.classList.remove('visible');
+        return;
+    }
+
+    dropdown.innerHTML = filtered.map((ns, i) => `
+        <div class="ns-option ${i === nsSelectedIndex ? 'selected' : ''}"
+             onmousedown="selectNamespace('${ns}')">
+            ${ns}
+        </div>
+    `).join('');
+    dropdown.classList.add('visible');
+}
+
+function selectNamespace(ns) {
+    document.getElementById('ns-input').value = ns;
+    document.getElementById('ns-dropdown').classList.remove('visible');
+    loadNamespace();
+}
+
+function onNsBlur() {
+    // Small delay so onmousedown on options fires first.
+    setTimeout(() => {
+        document.getElementById('ns-dropdown').classList.remove('visible');
+    }, 150);
+}
 
 // ── Namespace ──
 async function loadNamespace() {
@@ -773,9 +862,29 @@ function showToast(label, msg, isError = false) {
     setTimeout(() => toast.classList.remove('show'), 3000);
 }
 
-// Enter key in namespace input.
+// Enter key and arrow key navigation in namespace input.
 document.getElementById('ns-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter') loadNamespace();
+    const dropdown = document.getElementById('ns-dropdown');
+    const options = dropdown.querySelectorAll('.ns-option');
+
+    if (e.key === 'Enter') {
+        if (nsSelectedIndex >= 0 && options[nsSelectedIndex]) {
+            selectNamespace(options[nsSelectedIndex].textContent.trim());
+        } else {
+            loadNamespace();
+        }
+        dropdown.classList.remove('visible');
+    } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        nsSelectedIndex = Math.min(nsSelectedIndex + 1, options.length - 1);
+        renderNsDropdown(document.getElementById('ns-input').value);
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        nsSelectedIndex = Math.max(nsSelectedIndex - 1, -1);
+        renderNsDropdown(document.getElementById('ns-input').value);
+    } else if (e.key === 'Escape') {
+        dropdown.classList.remove('visible');
+    }
 });
 </script>
 </body>
