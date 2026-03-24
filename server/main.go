@@ -11,6 +11,7 @@ import (
 
 	"github.com/steveknoblock/hatcheck-go/internal/cas"
 	"github.com/steveknoblock/hatcheck-go/internal/metadata"
+	"github.com/steveknoblock/hatcheck-go/internal/share"
 )
 
 func stashHandler(w http.ResponseWriter, req *http.Request, objPath string, meta *metadata.Store) {
@@ -244,6 +245,75 @@ func collectionHandler(w http.ResponseWriter, req *http.Request, objPath string,
 	fmt.Fprintf(w, "%s\n", hash)
 }
 
+// exportHandler streams a tar.gz archive to the client.
+// GET /export?source=bob
+// GET /export?source=bob&name=my-document
+func exportHandler(w http.ResponseWriter, req *http.Request, objPath, metaPath string) {
+	if req.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	source := req.URL.Query().Get("source")
+	name := req.URL.Query().Get("name")
+
+	if source == "" {
+		http.Error(w, "missing source parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Write archive to a temp file then stream it.
+	tmp, err := os.CreateTemp("", "hatcheck-export-*.tar.gz")
+	if err != nil {
+		http.Error(w, "failed to create temp file", http.StatusInternalServerError)
+		return
+	}
+	defer os.Remove(tmp.Name())
+	tmp.Close()
+
+	if err := share.Export(objPath, metaPath, source, name, tmp.Name()); err != nil {
+		http.Error(w, "export failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	filename := source + ".tar.gz"
+	w.Header().Set("Content-Type", "application/gzip")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	http.ServeFile(w, req, tmp.Name())
+}
+
+// importHandler accepts a tar.gz archive as the request body and imports it.
+// POST /import
+func importHandler(w http.ResponseWriter, req *http.Request, objPath, metaPath string) {
+	if req.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Write body to a temp file.
+	tmp, err := os.CreateTemp("", "hatcheck-import-*.tar.gz")
+	if err != nil {
+		http.Error(w, "failed to create temp file", http.StatusInternalServerError)
+		return
+	}
+	defer os.Remove(tmp.Name())
+
+	if _, err := io.Copy(tmp, req.Body); err != nil {
+		tmp.Close()
+		http.Error(w, "failed to read upload", http.StatusBadRequest)
+		return
+	}
+	tmp.Close()
+
+	if err := share.Import(tmp.Name(), objPath, metaPath); err != nil {
+		http.Error(w, "import failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintln(w, "import successful")
+}
+
 func main() {
 	objPath := os.Getenv("HATCHECK_DATA")
 	if objPath == "" {
@@ -293,6 +363,12 @@ func main() {
 	})
 	http.HandleFunc("/collection", func(w http.ResponseWriter, req *http.Request) {
 		collectionHandler(w, req, objPath, meta)
+	})
+	http.HandleFunc("/export", func(w http.ResponseWriter, req *http.Request) {
+		exportHandler(w, req, objPath, metaPath)
+	})
+	http.HandleFunc("/import", func(w http.ResponseWriter, req *http.Request) {
+		importHandler(w, req, objPath, metaPath)
 	})
 
 	http.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.Dir(uiPath))))
