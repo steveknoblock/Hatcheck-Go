@@ -53,10 +53,9 @@
             display: flex;
             align-items: center;
             gap: 6px;
-            padding: 8px 10px;
-            border-bottom: 1px solid var(--border);
+            flex: 1;
+            max-width: 280px;
             position: relative;
-            flex-shrink: 0;
         }
 
         .ns-label {
@@ -85,8 +84,8 @@
         .ns-dropdown {
             position: absolute;
             top: 100%;
-            left: 0;
-            right: 0;
+            left: 28px;
+            right: 48px;
             background: var(--surface);
             border: 1px solid var(--border);
             border-top: none;
@@ -407,6 +406,16 @@
 
 <header>
     <h1>Hatcheck</h1>
+    <div class="ns-input-wrap">
+        <span class="ns-label">ns</span>
+        <input class="ns-input" id="ns-input" type="text" placeholder="namespace" value=""
+               autocomplete="off"
+               oninput="onNsInput(this.value)"
+               onfocus="onNsFocus()"
+               onblur="onNsBlur()">
+        <div class="ns-dropdown" id="ns-dropdown"></div>
+        <button class="ns-go" onclick="loadNamespace()">Go</button>
+    </div>
     <div class="header-right">
         <button class="btn btn-ghost" onclick="newObject()" title="New object in current namespace">+ New</button>
         <div class="status">
