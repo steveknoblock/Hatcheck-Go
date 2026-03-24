@@ -36,7 +36,6 @@
             display: flex;
             align-items: center;
             padding: 0 16px;
-            gap: 16px;
             flex-shrink: 0;
             z-index: 10;
         }
@@ -54,9 +53,10 @@
             display: flex;
             align-items: center;
             gap: 6px;
-            flex: 1;
-            max-width: 280px;
+            padding: 8px 10px;
+            border-bottom: 1px solid var(--border);
             position: relative;
+            flex-shrink: 0;
         }
 
         .ns-label {
@@ -73,10 +73,11 @@
             border: 1px solid var(--border);
             color: var(--text);
             font-family: var(--mono);
-            font-size: 12px;
-            padding: 4px 8px;
+            font-size: 11px;
+            padding: 4px 7px;
             outline: none;
             transition: border-color 0.15s;
+            min-width: 0;
         }
 
         .ns-input:focus { border-color: var(--accent); }
@@ -84,8 +85,8 @@
         .ns-dropdown {
             position: absolute;
             top: 100%;
-            left: 28px;
-            right: 48px;
+            left: 0;
+            right: 0;
             background: var(--surface);
             border: 1px solid var(--border);
             border-top: none;
@@ -406,16 +407,6 @@
 
 <header>
     <h1>Hatcheck</h1>
-    <div class="ns-input-wrap">
-        <span class="ns-label">ns</span>
-        <input class="ns-input" id="ns-input" type="text" placeholder="namespace" value=""
-               autocomplete="off"
-               oninput="onNsInput(this.value)"
-               onfocus="onNsFocus()"
-               onblur="onNsBlur()">
-        <div class="ns-dropdown" id="ns-dropdown"></div>
-        <button class="ns-go" onclick="loadNamespace()">Go</button>
-    </div>
     <div class="header-right">
         <button class="btn btn-ghost" onclick="newObject()" title="New object in current namespace">+ New</button>
         <div class="status">
@@ -427,6 +418,16 @@
 
 <div class="workspace">
     <div class="panel-left" id="panel-left">
+        <div class="ns-input-wrap">
+            <span class="ns-label">ns</span>
+            <input class="ns-input" id="ns-input" type="text" placeholder="namespace"
+                   autocomplete="off"
+                   oninput="onNsInput(this.value)"
+                   onfocus="onNsFocus()"
+                   onblur="onNsBlur()">
+            <div class="ns-dropdown" id="ns-dropdown"></div>
+            <button class="ns-go" onclick="loadNamespace()">Go</button>
+        </div>
         <div class="panel-header">
             <span class="panel-label" id="panel-title">Names</span>
             <span class="panel-count" id="panel-count">—</span>
