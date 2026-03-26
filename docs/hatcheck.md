@@ -16,9 +16,9 @@ For example, if you Stash some text and then it changes and you Stash the new te
 
 The CAS itself remains completely independent of the metadata system and the web server. It just stores and retrieves text by hash. The meaning of the content is interpreted by the metadata layer and the application.
 
-The data types supported by Hatcheck are different interpretations of JSON data. Currently supported types are: Object, Collection, and Relation.
+## Data Types
 
-
+The data types supported by Hatcheck are: Object, Collection, Relation, and Name. An object is plain text. A Collection or Relation is an object containing JSON specifying relationships between objects--each is a different interpretation of a plain text object.
 
 ## Metadata
 
@@ -32,9 +32,11 @@ Every Hatcheck operation is written to a log.
 
 At runtime when the server starts, the metadata log is replayed and the NameIndex is built in memory alongside the TagIndex, DateIndex, and RelationIndex (and any other additional index defined by a plugin). From that point on all four indexes coexist in memory and can be queried together, even though their origins are different — tags and dates come from stash entries, names come from name entries, relations from relation entries.
 
+Each log entry consists of an Envelope containing a typed operation.
+
 ### Tags
 
-Objects are organized in metadata by tags.
+Tags are embedded metadata. They live in the text of plain text objects. Objects are organized by tags. Tags are an exception to the way metadata is stored in the Log because they are embedded metadata.
 
 ## Composability
 
@@ -117,7 +119,7 @@ A Relation is a JSON object containing identifiers for two related objects and a
 
 A Name is a label that provides a human-readable label for any kind of object and is not stored in the CAS, but exists only in the metadata log.
 
-_Important!_ Names are labels maintained by the metadata system. To preserve naming the metadata would have to be exported with the objects.
+_Important!_ Names are labels maintained by the metadata system in the Log. To preserve naming, the metadata must be exported along with the objects.
 
 ## Common Data Structures
 
@@ -216,5 +218,5 @@ All objects tagged #ideas — use tagIndex
 All objects stashed today — use dateIndex
 All objects tagged #ideas stashed this week — intersect both results
 
-And later if you think of another useful projection — say an index by content size, or by which tags co-occur — you just add another index built from the same log. You don't change the log format or lose any history.
+There are four built-in indexes: tag, date, name, and relation. Later, if you think of another useful projection, for example, an index by content size, or by which tags co-occur, you just add another index built from the same log. You don't change the log format or lose any history.
 This is essentially what a database does internally when you add an index to a table — it builds a separate data structure optimized for a specific query pattern.
