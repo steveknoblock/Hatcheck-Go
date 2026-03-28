@@ -245,6 +245,123 @@ func collectionHandler(w http.ResponseWriter, req *http.Request, objPath string,
 	fmt.Fprintf(w, "%s\n", hash)
 }
 
+// relationHandler stashes a Relation object and logs it to the metadata store.
+// POST /relation?from=<hash>&rel=<predicate>&to=<hash>
+//
+// The relation JSON is stored as a CAS object (immutable, addressable by hash)
+// and also appended to the metadata log for indexing. Both from and to must be
+// non-empty; rel is the predicate drawn from the tag vocabulary.
+func relationHandler(w http.ResponseWriter, req *http.Request, objPath string, meta *metadata.Store) {
+	if req.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	from := req.URL.Query().Get("from")
+	rel := req.URL.Query().Get("rel")
+	to := req.URL.Query().Get("to")
+
+	if from == "" || rel == "" || to == "" {
+		http.Error(w, "missing from, rel, or to parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Build the relation JSON — this is the CAS object content.
+	type relationObject struct {
+		From string `json:"from"`
+		Rel  string `json:"rel"`
+		To   string `json:"to"`
+	}
+	content, err := json.Marshal(relationObject{From: from, Rel: rel, To: to})
+	if err != nil {
+		http.Error(w, "failed to marshal relation", http.StatusInternalServerError)
+		return
+	}
+
+	// Stash as a CAS object — the relation is immutable content like any other.
+	hash, err := cas.Stash(string(content), objPath)
+	if err != nil {
+		http.Error(w, "failed to stash relation", http.StatusInternalServerError)
+		return
+	}
+
+	// Log to metadata store for indexing by from, to, and rel.
+	if err := meta.AppendRelation(hash, from, rel, to); err != nil {
+		log.Printf("warning: failed to append relation metadata for %s: %v", hash, err)
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	fmt.Fprintf(w, "%s\n", hash)
+}
+
+// relationsHandler returns all outgoing and incoming relations for a given hash.
+// GET /relations?hash=<hash>
+//
+// Response shape:
+//
+//	{
+//	  "outgoing": [{"hash":"...","from":"...","rel":"...","to":"..."}, ...],
+//	  "incoming": [{"hash":"...","from":"...","rel":"...","to":"..."}, ...]
+//	}
+//
+// Both arrays are always present, empty when no relations exist.
+// This endpoint returns structured relation data rather than hashes alone,
+// so the UI can display and navigate the syndetic web without additional fetches.
+func relationsHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store) {
+	if req.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	hash := req.URL.Query().Get("hash")
+	if hash == "" {
+		http.Error(w, "missing hash parameter", http.StatusBadRequest)
+		return
+	}
+
+	outgoing, incoming := meta.RelationsForHash(hash)
+
+	// Ensure non-nil slices so the JSON encodes as [] not null.
+	if outgoing == nil {
+		outgoing = []metadata.RelationPayload{}
+	}
+	if incoming == nil {
+		incoming = []metadata.RelationPayload{}
+	}
+
+	type relationsResponse struct {
+		Outgoing []metadata.RelationPayload `json:"outgoing"`
+		Incoming []metadata.RelationPayload `json:"incoming"`
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(relationsResponse{
+		Outgoing: outgoing,
+		Incoming: incoming,
+	})
+}
+
+// tagsHandler returns all known tag keys from the tag index.
+// GET /tags
+//
+// Used by the UI to populate the relation type autocomplete picker.
+// The tag vocabulary is derived entirely from #hashtags in stashed content,
+// so it grows organically as the user creates documents.
+func tagsHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store) {
+	if req.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	tags := meta.AllTags()
+	if tags == nil {
+		tags = []string{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tags)
+}
+
 // exportHandler streams a tar.gz archive to the client.
 // GET /export?source=bob
 // GET /export?source=bob&name=my-document
@@ -363,6 +480,15 @@ func main() {
 	})
 	http.HandleFunc("/collection", func(w http.ResponseWriter, req *http.Request) {
 		collectionHandler(w, req, objPath, meta)
+	})
+	http.HandleFunc("/relation", func(w http.ResponseWriter, req *http.Request) {
+		relationHandler(w, req, objPath, meta)
+	})
+	http.HandleFunc("/relations", func(w http.ResponseWriter, req *http.Request) {
+		relationsHandler(w, req, meta)
+	})
+	http.HandleFunc("/tags", func(w http.ResponseWriter, req *http.Request) {
+		tagsHandler(w, req, meta)
 	})
 	http.HandleFunc("/export", func(w http.ResponseWriter, req *http.Request) {
 		exportHandler(w, req, objPath, metaPath)

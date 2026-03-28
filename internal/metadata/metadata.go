@@ -22,11 +22,11 @@ type Entry struct {
 
 // Op constants.
 const (
-	OpStash       = "stash"
-	OpCollection  = "collection"
-	OpRelation    = "relation"
-	OpNameCreate  = "name-create"
-	OpNameUpdate  = "name-update"
+	OpStash      = "stash"
+	OpCollection = "collection"
+	OpRelation   = "relation"
+	OpNameCreate = "name-create"
+	OpNameUpdate = "name-update"
 )
 
 // --- Payload structs ---
@@ -296,6 +296,41 @@ func (s *Store) TagsForHash(hash string) []string {
 	return []string{}
 }
 
+// AllTags returns all known tag keys from the TagIndex.
+// Used to populate the relation type autocomplete vocabulary.
+func (s *Store) AllTags() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, idx := range s.indexes {
+		if idx.Name() == "tag" {
+			if ti, ok := idx.(*TagIndex); ok {
+				return ti.Tags()
+			}
+		}
+	}
+	return []string{}
+}
+
+// RelationsForHash returns all outgoing and incoming relations for a given hash.
+// Outgoing: relations where hash is the From end.
+// Incoming: relations where hash is the To end.
+func (s *Store) RelationsForHash(hash string) (outgoing []RelationPayload, incoming []RelationPayload) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, idx := range s.indexes {
+		if idx.Name() == "relation" {
+			if ri, ok := idx.(*RelationIndex); ok {
+				outgoing = ri.QueryRich("from:" + hash)
+				incoming = ri.QueryRich("to:" + hash)
+				return
+			}
+		}
+	}
+	return []RelationPayload{}, []RelationPayload{}
+}
+
 // NameEntry holds a label and the hash it points to.
 type NameEntry struct {
 	Label string `json:"label"`
@@ -388,6 +423,16 @@ func (t *TagIndex) Add(entry Entry) {
 
 func (t *TagIndex) Query(key string) []string {
 	return t.data[strings.ToLower(key)]
+}
+
+// Tags returns all known tag keys in the index.
+// Used by Store.AllTags() to populate the relation type vocabulary.
+func (t *TagIndex) Tags() []string {
+	result := make([]string, 0, len(t.data))
+	for tag := range t.data {
+		result = append(result, tag)
+	}
+	return result
 }
 
 // DateIndex maps dates (YYYY-MM-DD) to hashes from stash entries.
@@ -511,22 +556,27 @@ func (r *RelationIndex) Add(entry Entry) {
 // Query accepts keys in the form "from:<hash>", "to:<hash>", or "rel:<predicate>".
 // Returns hashes of the relation objects matching the key.
 func (r *RelationIndex) Query(key string) []string {
-	var relations []RelationPayload
-
-	switch {
-	case strings.HasPrefix(key, "from:"):
-		relations = r.byFrom[strings.TrimPrefix(key, "from:")]
-	case strings.HasPrefix(key, "to:"):
-		relations = r.byTo[strings.TrimPrefix(key, "to:")]
-	case strings.HasPrefix(key, "rel:"):
-		relations = r.byRel[strings.TrimPrefix(key, "rel:")]
-	}
-
+	relations := r.QueryRich(key)
 	hashes := make([]string, len(relations))
 	for i, rel := range relations {
 		hashes[i] = rel.Hash
 	}
 	return hashes
+}
+
+// QueryRich accepts the same keys as Query but returns full RelationPayload structs
+// rather than just hashes. Used by Store.RelationsForHash() to serve structured
+// relation data to the application layer.
+func (r *RelationIndex) QueryRich(key string) []RelationPayload {
+	switch {
+	case strings.HasPrefix(key, "from:"):
+		return r.byFrom[strings.TrimPrefix(key, "from:")]
+	case strings.HasPrefix(key, "to:"):
+		return r.byTo[strings.TrimPrefix(key, "to:")]
+	case strings.HasPrefix(key, "rel:"):
+		return r.byRel[strings.TrimPrefix(key, "rel:")]
+	}
+	return nil
 }
 
 // --- Helpers ---
