@@ -409,6 +409,8 @@
     <h1>Hatcheck</h1>
     <div class="header-right">
         <button class="btn btn-ghost" onclick="newObject()" title="New object in current namespace">+ New</button>
+        <button class="btn btn-ghost" onclick="triggerImport()" title="Import a shared archive">↓ Import</button>
+        <input type="file" id="import-file-input" accept=".tar.gz,.gz" style="display:none" onchange="handleImportFile(this)">
         <div class="status">
             <div class="status-dot"></div>
             <span id="status-text">ready</span>
@@ -445,6 +447,7 @@
         </div>
         <div class="editor-header">
             <div class="current-hash" id="current-hash"><span>—</span></div>
+            <button class="btn btn-ghost" id="share-btn" onclick="shareDocument()" disabled title="Share this document">↑ Share</button>
             <button class="btn btn-primary" id="save-btn" onclick="saveContent()" disabled>Save</button>
         </div>
         <div class="editor-area">
@@ -701,6 +704,7 @@ function renderEditor(hash, content, readOnly = false) {
     currentHash = hash;
     const editor = document.getElementById('editor');
     const saveBtn = document.getElementById('save-btn');
+    const shareBtn = document.getElementById('share-btn');
     const hashEl = document.getElementById('current-hash');
 
     editor.value = content || '';
@@ -710,6 +714,7 @@ function renderEditor(hash, content, readOnly = false) {
         : 'Write something here…\n\nUse #hashtags to tag objects for discovery.';
 
     saveBtn.disabled = readOnly || !hash && pathStack.length === 0;
+    shareBtn.disabled = !currentLabel;
     hashEl.innerHTML = hash ? `<span>${hash}</span>` : '<span>—</span>';
     editorDirty = false;
 
@@ -850,6 +855,70 @@ function renderBreadcrumb() {
         : '';
 
     el.innerHTML = ns + parts.join('<span class="crumb-sep"> / </span>');
+}
+
+// ── Share ──
+function shareDocument() {
+    if (!namespace || !currentLabel) return;
+
+    const fullName = namespace + '/' + currentLabel;
+    const url = `${API}/export?source=${encodeURIComponent(namespace)}&name=${encodeURIComponent(fullName)}`;
+
+    // Trigger download via a temporary anchor element.
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = namespace + '.tar.gz';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    showToast('Sharing', `${fullName} → ${namespace}.tar.gz`);
+}
+
+// ── Import ──
+function triggerImport() {
+    document.getElementById('import-file-input').click();
+}
+
+async function handleImportFile(input) {
+    const file = input.files[0];
+    if (!file) return;
+
+    // Reset so the same file can be selected again later.
+    input.value = '';
+
+    showToast('Importing', file.name);
+
+    try {
+        const res = await fetch(`${API}/import`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/gzip' },
+            body: file,
+        });
+
+        if (!res.ok) {
+            const msg = await res.text();
+            throw new Error(msg);
+        }
+
+        // Read the source from the archive to switch namespace.
+        // We re-fetch /namespaces to find the newly added one.
+        const prevNamespaces = [...allNamespaces];
+        await fetchNamespaces();
+        const newNs = allNamespaces.find(ns => !prevNamespaces.includes(ns));
+
+        if (newNs) {
+            document.getElementById('ns-input').value = newNs;
+            namespace = newNs;
+            await loadNamespace();
+            showToast('Imported', `Switched to namespace: ${newNs}`);
+        } else {
+            showToast('Imported', file.name);
+        }
+
+    } catch (err) {
+        showToast('Import failed', err.message, true);
+    }
 }
 
 // ── Toast ──
