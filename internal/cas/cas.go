@@ -20,9 +20,6 @@ func Stash(data string, objPath string) (string, error) {
 	// File name is remaining 30 hex chars.
 	fileName := hexHash[2:]
 
-	fmt.Printf("Shard: %s\n", shardName)
-	fmt.Printf("File: %s\n", fileName)
-
 	// Create directory.
 	path := objPath + "/" + shardName
 	fmt.Println("Path: " + path)
@@ -43,7 +40,6 @@ func Stash(data string, objPath string) (string, error) {
 	if e != nil {
 		return "", e
 	}
-	fmt.Printf("wrote %d bytes\n", n)
 
 	return hexHash, nil
 
