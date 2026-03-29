@@ -36,7 +36,7 @@ func Stash(data string, objPath string) (string, error) {
 	}
 	defer f.Close()
 
-	n, e := f.WriteString(data)
+	_, e = f.WriteString(data)
 	if e != nil {
 		return "", e
 	}
