@@ -30,7 +30,6 @@ func stashHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, me
 
 	content := string(body)
 
-	//hash, err := cas.Stash(content, objPath)
 	hash, err := store.Stash(content)
 	if err != nil {
 		http.Error(w, "failed to stash content", http.StatusInternalServerError)
