@@ -3,6 +3,7 @@ package cas
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 const shardLen = 2
@@ -14,8 +15,14 @@ type Store struct {
 	hashFunc HashFunc
 }
 
-func New(objPath string, hashFunc HashFunc) *Store {
-	return &Store{objPath: objPath, hashFunc: hashFunc}
+func New(objPath string, hashFunc HashFunc) (*Store, error) {
+	if hashFunc == nil {
+		return nil, fmt.Errorf("hashFunc must not be nil")
+	}
+	if err := os.MkdirAll(objPath, os.ModePerm); err != nil {
+		return nil, fmt.Errorf("failed to create object store at %q: %w", objPath, err)
+	}
+	return &Store{objPath: objPath, hashFunc: hashFunc}, nil
 }
 
 func (store *Store) Stash(content string) (string, error) {
@@ -36,16 +43,8 @@ func (store *Store) Stash(content string) (string, error) {
 	// File name is remaining hex chars.
 	fileName := hash[shardLen:]
 
-	// Create directory.
-	path := store.objPath + "/" + shardName
-	// fmt.Println("Path: " + path)
-
-	if e := os.MkdirAll(path, os.ModePerm); e != nil {
-		return "", e
-	}
-
 	// Create file.
-	filePath := path + "/" + fileName
+	filePath := store.objPath + "/" + fileName
 	f, e := os.Create(filePath)
 	if e != nil {
 		return "", e
@@ -82,4 +81,20 @@ func (store *Store) Fetch(hash string) (string, error) {
 	}
 
 	return string(data), nil
+}
+
+func (store *Store) List() ([]string, error) {
+	var hashes []string
+	err := filepath.Walk(store.objPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			shard := filepath.Base(filepath.Dir(path))
+			file := filepath.Base(path)
+			hashes = append(hashes, shard+file)
+		}
+		return nil
+	})
+	return hashes, err
 }
