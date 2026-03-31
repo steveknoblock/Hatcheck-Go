@@ -1,28 +1,44 @@
 package cas
 
 import (
-	"crypto/md5"
 	"fmt"
 	"os"
 )
 
-func Stash(data string, objPath string) (string, error) {
+const shardLen = 2
 
-	// Create hash of data.
-	hash := md5.Sum([]byte(data))
+type HashFunc func(content string) string
 
-	hexHash := fmt.Sprintf("%x", hash)
+type Store struct {
+	objPath  string
+	hashFunc HashFunc
+}
 
-	// Create directory.
+func New(objPath string, hashFunc HashFunc) *Store {
+	return &Store{objPath: objPath, hashFunc: hashFunc}
+}
 
+func (store *Store) Stash(content string) (string, error) {
+
+	// Create hash of content.
+
+	// Hash content using provided hash function.
+	hash := store.hashFunc(content)
+
+	// Create shard and file name from hash.
+
+	// Check hash is long enough to create shard and file name.
+	if len(hash) < 3 {
+		return "", fmt.Errorf("hash too short: %q", hash)
+	}
 	// Shard name is first 2 hex chars (1 byte).
-	shardName := hexHash[0:2]
-	// File name is remaining 30 hex chars.
-	fileName := hexHash[2:]
+	shardName := hash[0:shardLen]
+	// File name is remaining hex chars.
+	fileName := hash[shardLen:]
 
 	// Create directory.
-	path := objPath + "/" + shardName
-	fmt.Println("Path: " + path)
+	path := store.objPath + "/" + shardName
+	// fmt.Println("Path: " + path)
 
 	if e := os.MkdirAll(path, os.ModePerm); e != nil {
 		return "", e
@@ -36,23 +52,28 @@ func Stash(data string, objPath string) (string, error) {
 	}
 	defer f.Close()
 
-	_, e = f.WriteString(data)
+	_, e = f.WriteString(content)
 	if e != nil {
 		return "", e
 	}
 
-	return hexHash, nil
+	return hash, nil
 
 }
 
-func Fetch(hexHash string, objPath string) (string, error) {
+func (store *Store) Fetch(hash string) (string, error) {
+
+	// Check hash is long enough to create shard and file name.
+	if len(hash) < 3 {
+		return "", fmt.Errorf("hash too short: %q", hash)
+	}
 
 	// Shard name is first 2 hex chars (1 byte).
-	shardName := hexHash[0:2]
-	// File name is remaining 30 hex chars.
-	fileName := hexHash[2:]
+	shardName := hash[0:shardLen]
+	// File name is remaining hex chars.
+	fileName := hash[shardLen:]
 
-	filePath := objPath + "/" + shardName + "/" + fileName
+	filePath := store.objPath + "/" + shardName + "/" + fileName
 
 	// Read file.
 	data, e := os.ReadFile(filePath)
