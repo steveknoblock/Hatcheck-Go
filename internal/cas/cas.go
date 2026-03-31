@@ -25,6 +25,7 @@ func New(objPath string, hashFunc HashFunc) (*Store, error) {
 	return &Store{objPath: objPath, hashFunc: hashFunc}, nil
 }
 
+// Stashes a value in the store.
 func (store *Store) Stash(content string) (string, error) {
 
 	// Create hash of content.
@@ -60,6 +61,7 @@ func (store *Store) Stash(content string) (string, error) {
 
 }
 
+// Fetches a value from the store.
 func (store *Store) Fetch(hash string) (string, error) {
 
 	// Check hash is long enough to create shard and file name.
@@ -83,6 +85,7 @@ func (store *Store) Fetch(hash string) (string, error) {
 	return string(data), nil
 }
 
+// Walk directory to build list of hashes.
 func (store *Store) List() ([]string, error) {
 	var hashes []string
 	err := filepath.Walk(store.objPath, func(path string, info os.FileInfo, err error) error {
