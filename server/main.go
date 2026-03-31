@@ -73,8 +73,6 @@ func listHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, met
 		return
 	}
 
-	var hashes []string
-
 	hashes, err := store.List()
 
 	if err != nil {
