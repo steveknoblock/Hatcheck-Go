@@ -45,7 +45,7 @@ func (store *Store) Stash(content string) (string, error) {
 	fileName := hash[shardLen:]
 
 	// Create file.
-	filePath := store.objPath + "/" + fileName
+	filePath := store.objPath + "/" + shardName + "/" + fileName
 	f, e := os.Create(filePath)
 	if e != nil {
 		return "", e
