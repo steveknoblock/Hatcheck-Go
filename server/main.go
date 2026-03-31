@@ -1,20 +1,21 @@
 package main
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 
 	"github.com/steveknoblock/hatcheck-go/internal/cas"
 	"github.com/steveknoblock/hatcheck-go/internal/metadata"
 	"github.com/steveknoblock/hatcheck-go/internal/share"
 )
 
-func stashHandler(w http.ResponseWriter, req *http.Request, objPath string, meta *metadata.Store) {
+func stashHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -29,7 +30,8 @@ func stashHandler(w http.ResponseWriter, req *http.Request, objPath string, meta
 
 	content := string(body)
 
-	hash, err := cas.Stash(content, objPath)
+	//hash, err := cas.Stash(content, objPath)
+	hash, err := store.Stash(content)
 	if err != nil {
 		http.Error(w, "failed to stash content", http.StatusInternalServerError)
 		return
@@ -43,7 +45,7 @@ func stashHandler(w http.ResponseWriter, req *http.Request, objPath string, meta
 	fmt.Fprintf(w, "%s\n", hash)
 }
 
-func fetchHandler(w http.ResponseWriter, req *http.Request, objPath string) {
+func fetchHandler(w http.ResponseWriter, req *http.Request, store *cas.Store) {
 	if req.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -55,7 +57,7 @@ func fetchHandler(w http.ResponseWriter, req *http.Request, objPath string) {
 		return
 	}
 
-	data, err := cas.Fetch(hash, objPath)
+	data, err := store.Fetch(hash)
 	if err != nil {
 		http.Error(w, "content not found", http.StatusNotFound)
 		return
@@ -65,7 +67,7 @@ func fetchHandler(w http.ResponseWriter, req *http.Request, objPath string) {
 	fmt.Fprintf(w, "%s\n", data)
 }
 
-func listHandler(w http.ResponseWriter, req *http.Request, objPath string, meta *metadata.Store) {
+func listHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store) {
 	if req.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -73,17 +75,7 @@ func listHandler(w http.ResponseWriter, req *http.Request, objPath string, meta 
 
 	var hashes []string
 
-	err := filepath.Walk(objPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() {
-			shard := filepath.Base(filepath.Dir(path))
-			file := filepath.Base(path)
-			hashes = append(hashes, shard+file)
-		}
-		return nil
-	})
+	hashes, err := store.List()
 
 	if err != nil {
 		http.Error(w, "failed to list objects", http.StatusInternalServerError)
@@ -210,7 +202,7 @@ func nameHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store)
 
 // collectionHandler stashes a Collection object and returns its hash.
 // POST /collection — body is a JSON array of hashes
-func collectionHandler(w http.ResponseWriter, req *http.Request, objPath string, meta *metadata.Store) {
+func collectionHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -231,7 +223,7 @@ func collectionHandler(w http.ResponseWriter, req *http.Request, objPath string,
 	}
 
 	content := string(body)
-	hash, err := cas.Stash(content, objPath)
+	hash, err := store.Stash(content)
 	if err != nil {
 		http.Error(w, "failed to stash collection", http.StatusInternalServerError)
 		return
@@ -251,7 +243,7 @@ func collectionHandler(w http.ResponseWriter, req *http.Request, objPath string,
 // The relation JSON is stored as a CAS object (immutable, addressable by hash)
 // and also appended to the metadata log for indexing. Both from and to must be
 // non-empty; rel is the predicate drawn from the tag vocabulary.
-func relationHandler(w http.ResponseWriter, req *http.Request, objPath string, meta *metadata.Store) {
+func relationHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -279,7 +271,7 @@ func relationHandler(w http.ResponseWriter, req *http.Request, objPath string, m
 	}
 
 	// Stash as a CAS object — the relation is immutable content like any other.
-	hash, err := cas.Stash(string(content), objPath)
+	hash, err := store.Stash(string(content))
 	if err != nil {
 		http.Error(w, "failed to stash relation", http.StatusInternalServerError)
 		return
@@ -447,6 +439,18 @@ func main() {
 		metaPath = "./metadata"
 	}
 
+	// Create the CAS store.
+	store, err := cas.New(objPath,
+		func(content string) string {
+			sum := md5.Sum([]byte(content))
+			return hex.EncodeToString(sum[:])
+		},
+	)
+	if err != nil {
+		log.Fatalf("failed to create CAS store: %v", err)
+	}
+
+	// Create the metadata store.
 	meta, err := metadata.New(metaPath,
 		&metadata.TagIndex{},
 		&metadata.DateIndex{},
@@ -458,13 +462,13 @@ func main() {
 	}
 
 	http.HandleFunc("/stash", func(w http.ResponseWriter, req *http.Request) {
-		stashHandler(w, req, objPath, meta)
+		stashHandler(w, req, store, meta)
 	})
 	http.HandleFunc("/fetch", func(w http.ResponseWriter, req *http.Request) {
-		fetchHandler(w, req, objPath)
+		fetchHandler(w, req, store)
 	})
 	http.HandleFunc("/list", func(w http.ResponseWriter, req *http.Request) {
-		listHandler(w, req, objPath, meta)
+		listHandler(w, req, store, meta)
 	})
 	http.HandleFunc("/query", func(w http.ResponseWriter, req *http.Request) {
 		queryHandler(w, req, meta)
@@ -479,10 +483,10 @@ func main() {
 		nameHandler(w, req, meta)
 	})
 	http.HandleFunc("/collection", func(w http.ResponseWriter, req *http.Request) {
-		collectionHandler(w, req, objPath, meta)
+		collectionHandler(w, req, store, meta)
 	})
 	http.HandleFunc("/relation", func(w http.ResponseWriter, req *http.Request) {
-		relationHandler(w, req, objPath, meta)
+		relationHandler(w, req, store, meta)
 	})
 	http.HandleFunc("/relations", func(w http.ResponseWriter, req *http.Request) {
 		relationsHandler(w, req, meta)
