@@ -7,6 +7,7 @@ import (
 )
 
 const shardLen = 2
+const directorySeparator = "/"
 
 type HashFunc func(content string) string
 
@@ -45,7 +46,7 @@ func (store *Store) Stash(content string) (string, error) {
 	fileName := hash[shardLen:]
 
 	// Create file.
-	filePath := store.objPath + "/" + shardName + "/" + fileName
+	filePath := store.objPath + directorySeparator + shardName + directorySeparator + fileName
 	f, e := os.Create(filePath)
 	if e != nil {
 		return "", e
@@ -74,7 +75,7 @@ func (store *Store) Fetch(hash string) (string, error) {
 	// File name is remaining hex chars.
 	fileName := hash[shardLen:]
 
-	filePath := store.objPath + "/" + shardName + "/" + fileName
+	filePath := store.objPath + directorySeparator + shardName + directorySeparator + fileName
 
 	// Read file.
 	data, e := os.ReadFile(filePath)
