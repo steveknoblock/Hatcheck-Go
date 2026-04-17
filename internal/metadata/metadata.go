@@ -5,8 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strings"
 	"sync"
 	"time"
 )
@@ -319,22 +317,4 @@ func (s *Store) IndexNames() []string {
 		names[i] = idx.Name()
 	}
 	return names
-}
-
-// --- ParseTags ---
-
-var hashtagRe = regexp.MustCompile(`#([a-zA-Z0-9_]+)`)
-
-func ParseTags(content string) []string {
-	matches := hashtagRe.FindAllStringSubmatch(content, -1)
-	seen := make(map[string]bool)
-	tags := []string{}
-	for _, m := range matches {
-		tag := strings.ToLower(m[1])
-		if !seen[tag] {
-			seen[tag] = true
-			tags = append(tags, tag)
-		}
-	}
-	return tags
 }

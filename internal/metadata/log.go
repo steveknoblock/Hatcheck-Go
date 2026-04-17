@@ -2,6 +2,8 @@ package metadata
 
 import (
 	"encoding/json"
+	"regexp"
+	"strings"
 	"time"
 )
 
@@ -51,4 +53,22 @@ type NameCreatePayload struct {
 type NameUpdatePayload struct {
 	Label string `json:"label"`
 	Hash  string `json:"hash"`
+}
+
+// --- ParseTags ---
+
+var hashtagRe = regexp.MustCompile(`#([a-zA-Z0-9_]+)`)
+
+func ParseTags(content string) []string {
+	matches := hashtagRe.FindAllStringSubmatch(content, -1)
+	seen := make(map[string]bool)
+	tags := []string{}
+	for _, m := range matches {
+		tag := strings.ToLower(m[1])
+		if !seen[tag] {
+			seen[tag] = true
+			tags = append(tags, tag)
+		}
+	}
+	return tags
 }
