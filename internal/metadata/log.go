@@ -45,12 +45,7 @@ type RelationPayload struct {
 	To   string `json:"to"`
 }
 
-type NameCreatePayload struct {
-	Label string `json:"label"`
-	Hash  string `json:"hash"`
-}
-
-type NameUpdatePayload struct {
+type NamePayload struct {
 	Label string `json:"label"`
 	Hash  string `json:"hash"`
 }
