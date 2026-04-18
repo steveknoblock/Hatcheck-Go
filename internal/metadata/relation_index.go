@@ -56,5 +56,5 @@ func (r *RelationIndex) QueryRich(key string) []RelationPayload {
 	case strings.HasPrefix(key, "rel:"):
 		return r.byRel[strings.TrimPrefix(key, "rel:")]
 	}
-	return nil
+	return []RelationshipPayload{}
 }
