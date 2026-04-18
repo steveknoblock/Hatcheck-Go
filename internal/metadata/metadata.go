@@ -11,23 +11,26 @@ import (
 
 // --- Store ---
 
-// Store holds the log and all registered indexes.
 type Store struct {
-	mu      sync.RWMutex
-	logPath string
-	Log     []Entry
-	indexes []Index
+	mu       sync.RWMutex
+	logPath  string
+	Log      []Entry
+	indexes  []Index
+	indexMap map[string]Index
 }
 
-// New creates a Store, loads the log, and registers the provided indexes.
 func New(metaPath string, indexes ...Index) (*Store, error) {
 	if err := os.MkdirAll(metaPath, 0755); err != nil {
 		return nil, err
 	}
 
 	s := &Store{
-		logPath: filepath.Join(metaPath, "log.json"),
-		indexes: indexes,
+		logPath:  filepath.Join(metaPath, "log.json"),
+		indexes:  indexes,
+		indexMap: make(map[string]Index),
+	}
+	for _, idx := range indexes {
+		s.indexMap[idx.Name()] = idx
 	}
 
 	if err := s.load(); err != nil {
@@ -142,12 +145,10 @@ func (s *Store) AppendNameCreate(label, hash string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Check for existing name via NameIndex.
-	for _, idx := range s.indexes {
-		if idx.Name() == "name" {
-			if results := idx.Query(label); len(results) > 0 {
-				return errors.New("name already exists: " + label)
-			}
+	// Check for existing name
+	if idx, ok := s.indexMap["name"]; ok {
+		if results := idx.Query(label); len(results) > 0 {
+			return errors.New("name already exists: " + label)
 		}
 	}
 
@@ -170,13 +171,11 @@ func (s *Store) AppendNameUpdate(label, hash string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Check name exists via NameIndex.
+	// Check name exists
 	found := false
-	for _, idx := range s.indexes {
-		if idx.Name() == "name" {
-			if results := idx.Query(label); len(results) > 0 {
-				found = true
-			}
+	if idx, ok := s.indexMap["name"]; ok {
+		if results := idx.Query(label); len(results) > 0 {
+			found = true
 		}
 	}
 	if !found {
@@ -243,11 +242,9 @@ func (s *Store) AllTags() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	for _, idx := range s.indexes {
-		if idx.Name() == "tag" {
-			if ti, ok := idx.(*TagIndex); ok {
-				return ti.Tags()
-			}
+	if idx, ok := s.indexMap["tag"]; ok {
+		if tl, ok := idx.(TagLister); ok {
+			return tl.Tags()
 		}
 	}
 	return []string{}
@@ -260,13 +257,11 @@ func (s *Store) RelationsForHash(hash string) (outgoing []RelationPayload, incom
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	for _, idx := range s.indexes {
-		if idx.Name() == "relation" {
-			if ri, ok := idx.(*RelationIndex); ok {
-				outgoing = ri.QueryRich("from:" + hash)
-				incoming = ri.QueryRich("to:" + hash)
-				return
-			}
+	if idx, ok := s.indexMap["relation"]; ok {
+		if rq, ok := idx.(RelationQuerier); ok {
+			outgoing = rq.QueryRich("from:" + hash)
+			incoming = rq.QueryRich("to:" + hash)
+			return
 		}
 	}
 	return []RelationPayload{}, []RelationPayload{}
@@ -285,11 +280,9 @@ func (s *Store) NamesInNamespace(namespace string) []NameEntry {
 	defer s.mu.RUnlock()
 
 	prefix := namespace + "/"
-	for _, idx := range s.indexes {
-		if idx.Name() == "name" {
-			if ni, ok := idx.(*NameIndex); ok {
-				return ni.ListNamespace(prefix)
-			}
+	if idx, ok := s.indexMap["name"]; ok {
+		if nl, ok := idx.(NameLister); ok {
+			return nl.ListNamespace(prefix)
 		}
 	}
 	return []NameEntry{}
@@ -300,11 +293,9 @@ func (s *Store) Namespaces() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	for _, idx := range s.indexes {
-		if idx.Name() == "name" {
-			if ni, ok := idx.(*NameIndex); ok {
-				return ni.Namespaces()
-			}
+	if idx, ok := s.indexMap["name"]; ok {
+		if nl, ok := idx.(NameLister); ok {
+			return nl.Namespaces()
 		}
 	}
 	return []string{}
