@@ -449,13 +449,13 @@ func main() {
 
 	// Create the metadata store.
 	meta, err := metadata.New(metaPath,
-		&metadata.TagIndex{},
-		&metadata.DateIndex{},
-		&metadata.NameIndex{},
-		&metadata.RelationIndex{},
+		metadata.NewTagIndex(),
+		metadata.NewDateIndex(),
+		metadata.NewNameIndex(),
+		metadata.NewRelationIndex(),
 	)
 	if err != nil {
-		log.Fatalf("failed to load metadata store: %v", err)
+		log.Fatalf("failed to create metadata store: %v", err)
 	}
 
 	http.HandleFunc("/stash", func(w http.ResponseWriter, req *http.Request) {
