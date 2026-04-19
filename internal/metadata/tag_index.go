@@ -10,6 +10,12 @@ type TagIndex struct {
 	data map[string][]string
 }
 
+func NewTagIndex() *TagIndex {
+	return &TagIndex{
+		data: make(map[string][]string),
+	}
+}
+
 func (t *TagIndex) Name() string { return "tag" }
 
 func (t *TagIndex) Add(entry Entry) {

@@ -13,6 +13,14 @@ type RelationIndex struct {
 	byRel  map[string][]RelationPayload
 }
 
+func NewRelationIndex() *RelationIndex {
+	return &RelationIndex{
+		byFrom: make(map[string][]RelationPayload),
+		byTo:   make(map[string][]RelationPayload),
+		byRel:  make(map[string][]RelationPayload),
+	}
+}
+
 func (r *RelationIndex) Name() string { return "relation" }
 
 func (r *RelationIndex) Add(entry Entry) {

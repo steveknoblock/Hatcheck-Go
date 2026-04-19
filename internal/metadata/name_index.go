@@ -10,6 +10,12 @@ type NameIndex struct {
 	data map[string]string // label -> current hash
 }
 
+func NewNameIndex() *NameIndex {
+	return &NameIndex{
+		data: make(map[string]string),
+	}
+}
+
 func (n *NameIndex) Name() string { return "name" }
 
 func (n *NameIndex) Add(entry Entry) {

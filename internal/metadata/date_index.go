@@ -7,6 +7,12 @@ type DateIndex struct {
 	data map[string][]string
 }
 
+func NewDateIndex() *DateIndex {
+	return &DateIndex{
+		data: make(map[string][]string),
+	}
+}
+
 func (d *DateIndex) Name() string { return "date" }
 
 func (d *DateIndex) Add(entry Entry) {
