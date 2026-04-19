@@ -20,7 +20,7 @@ func (n *NameIndex) Add(entry Entry) {
 		n.data = make(map[string]string)
 	}
 	// Both create and update payloads have the same shape.
-	var p NameCreatePayload
+	var p NamePayload
 	if err := json.Unmarshal(entry.Payload, &p); err != nil {
 		return
 	}

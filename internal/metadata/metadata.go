@@ -152,7 +152,7 @@ func (s *Store) AppendNameCreate(label, hash string) error {
 		}
 	}
 
-	payload, err := json.Marshal(NameCreatePayload{
+	payload, err := json.Marshal(NamePayload{
 		Label: label,
 		Hash:  hash,
 	})
@@ -182,7 +182,7 @@ func (s *Store) AppendNameUpdate(label, hash string) error {
 		return errors.New("name does not exist: " + label)
 	}
 
-	payload, err := json.Marshal(NameUpdatePayload{
+	payload, err := json.Marshal(NamePayload{
 		Label: label,
 		Hash:  hash,
 	})
