@@ -1,5 +1,40 @@
 # Payloads
 
+| Type      |
+| Hash.    
+
+Stash
+----------------
+Hash string
+Size integer
+Tags list
+
+Name
+----------------
+Hash string
+Label string
+Hashes list
+
+
+Collection
+----------------
+Hash string
+Hashes list
+
+Relation
+----------------
+Hash
+From
+Rel
+To
+
+Capability
+---------------
+Hash
+Capability
+
+
+
 // --- Payload structs ---
 
 type StashPayload struct {
