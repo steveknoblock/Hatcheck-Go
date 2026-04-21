@@ -1,0 +1,1734 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hatcheck</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg:          #0e0e0e;
+            --surface:     #161616;
+            --surface2:    #1e1e1e;
+            --border:      #2a2a2a;
+            --accent:      #c8f04b;
+            --accent-dim:  #8aab2a;
+            --text:        #e8e8e8;
+            --text-dim:    #666;
+            --text-muted:  #3a3a3a;
+            --danger:      #ff4d4d;
+            --collection:  #4bb8f0;
+            --relation:    #f0a84b;
+            --mono:        'JetBrains Mono', monospace;
+            --sans:        'Syne', sans-serif;
+        }
+
+        html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--mono); overflow: hidden; }
+
+        /* ── Header ── */
+        header {
+            height: 48px;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            flex-shrink: 0;
+            z-index: 10;
+        }
+
+        header h1 {
+            font-family: var(--sans);
+            font-weight: 800;
+            font-size: 18px;
+            letter-spacing: -0.5px;
+            color: var(--accent);
+            flex-shrink: 0;
+        }
+
+        .ns-input-wrap {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 10px;
+            border-bottom: 1px solid var(--border);
+            position: relative;
+            flex-shrink: 0;
+        }
+
+        .ns-label {
+            font-size: 10px;
+            color: var(--text-dim);
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            flex-shrink: 0;
+        }
+
+        .ns-input {
+            flex: 1;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: var(--mono);
+            font-size: 11px;
+            padding: 4px 7px;
+            outline: none;
+            transition: border-color 0.15s;
+            min-width: 0;
+        }
+
+        .ns-input:focus { border-color: var(--accent); }
+
+        .ns-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-top: none;
+            z-index: 100;
+            display: none;
+            max-height: 160px;
+            overflow-y: auto;
+        }
+
+        .ns-dropdown.visible { display: block; }
+
+        .ns-option {
+            padding: 6px 10px;
+            font-size: 11px;
+            color: var(--text-dim);
+            cursor: pointer;
+            transition: all 0.1s;
+        }
+
+        .ns-option:hover, .ns-option.selected {
+            background: rgba(200,240,75,0.08);
+            color: var(--accent);
+        }
+
+        .ns-go {
+            padding: 4px 10px;
+            background: var(--accent);
+            border: none;
+            color: #0e0e0e;
+            font-family: var(--mono);
+            font-size: 10px;
+            font-weight: 500;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .ns-go:hover { background: #d4f55a; }
+
+        .header-right {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .status {
+            font-size: 11px;
+            color: var(--text-dim);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .status-dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: var(--accent);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+        /* ── Workspace ── */
+        .workspace {
+            display: flex;
+            height: calc(100vh - 48px);
+            overflow: hidden;
+        }
+
+        /* ── Left panel ── */
+        .panel-left {
+            width: 260px;
+            min-width: 140px;
+            max-width: 500px;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid var(--border);
+            background: var(--surface);
+            flex-shrink: 0;
+        }
+
+        .panel-header {
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+
+        .panel-label {
+            font-size: 10px;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+        }
+
+        .panel-count {
+            font-size: 10px;
+            color: var(--accent);
+        }
+
+        .tree {
+            flex: 1;
+            overflow-y: auto;
+            padding: 6px 0;
+        }
+
+        .tree::-webkit-scrollbar { width: 4px; }
+        .tree::-webkit-scrollbar-track { background: transparent; }
+        .tree::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+        .tree-item {
+            display: flex;
+            align-items: flex-start;
+            padding: 6px 14px;
+            font-size: 11px;
+            cursor: pointer;
+            border-left: 2px solid transparent;
+            transition: all 0.12s ease;
+            gap: 6px;
+            line-height: 1.5;
+        }
+
+        .tree-item:hover {
+            background: rgba(200,240,75,0.04);
+            border-left-color: var(--text-muted);
+        }
+
+        .tree-item.active {
+            background: rgba(200,240,75,0.07);
+            border-left-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .tree-item.new { animation: flash 1.2s ease forwards; }
+
+        @keyframes flash {
+            0%   { background: rgba(200,240,75,0.18); }
+            100% { background: rgba(200,240,75,0.07); }
+        }
+
+        .tree-icon {
+            flex-shrink: 0;
+            margin-top: 1px;
+            font-size: 10px;
+        }
+
+        .icon-name       { color: var(--accent-dim); }
+        .icon-collection { color: var(--collection); }
+        .icon-relation   { color: var(--relation); }
+        .icon-object     { color: var(--text-dim); }
+
+        .tree-label {
+            flex: 1;
+            color: var(--text-dim);
+            word-break: break-all;
+        }
+
+        .tree-item.active .tree-label { color: var(--accent); }
+        .tree-item:hover .tree-label  { color: var(--text); }
+
+        .tree-indent { padding-left: 20px; }
+
+        .empty-state {
+            padding: 28px 14px;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 11px;
+            line-height: 1.9;
+        }
+
+        /* ── Relations section in tree ── */
+        .tree-section {
+            border-top: 1px solid var(--border);
+            margin-top: 4px;
+            padding-top: 4px;
+        }
+
+        .tree-section-label {
+            padding: 6px 14px 3px;
+            font-size: 9px;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+
+        .tree-item-relation {
+            display: flex;
+            align-items: flex-start;
+            padding: 5px 14px 5px 24px;
+            font-size: 10px;
+            cursor: pointer;
+            border-left: 2px solid transparent;
+            transition: all 0.12s ease;
+            gap: 6px;
+            line-height: 1.5;
+        }
+
+        .tree-item-relation:hover {
+            background: rgba(240,168,75,0.06);
+            border-left-color: var(--relation);
+        }
+
+        .tree-item-relation:hover .tree-label { color: var(--relation); }
+
+        .rel-predicate {
+            font-size: 9px;
+            color: var(--relation);
+            letter-spacing: 0.06em;
+            flex-shrink: 0;
+            padding-top: 1px;
+        }
+
+        .rel-target {
+            flex: 1;
+            color: var(--text-dim);
+            word-break: break-all;
+        }
+
+        /* ── Divider ── */
+        .divider {
+            width: 4px;
+            background: var(--border);
+            cursor: col-resize;
+            flex-shrink: 0;
+            transition: background 0.15s;
+        }
+
+        .divider:hover, .divider.dragging { background: var(--accent); }
+
+        /* ── Right panel ── */
+        .panel-right {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-width: 200px;
+            overflow: hidden;
+        }
+
+        /* Breadcrumb */
+        .breadcrumb {
+            padding: 8px 16px;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface);
+            font-size: 11px;
+            color: var(--text-dim);
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            flex-wrap: wrap;
+            flex-shrink: 0;
+            min-height: 36px;
+        }
+
+        .crumb {
+            cursor: pointer;
+            color: var(--text-dim);
+            transition: color 0.12s;
+        }
+
+        .crumb:hover { color: var(--accent); }
+
+        .crumb-sep { color: var(--text-muted); }
+
+        .crumb-current { color: var(--text); cursor: default; }
+
+        /* ── Tab strip ── */
+        .tab-strip {
+            display: flex;
+            align-items: stretch;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface);
+            flex-shrink: 0;
+            gap: 0;
+        }
+
+        .tab-btn {
+            padding: 8px 16px;
+            font-family: var(--mono);
+            font-size: 10px;
+            font-weight: 500;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid transparent;
+            cursor: pointer;
+            transition: all 0.12s;
+            margin-bottom: -1px;
+        }
+
+        .tab-btn:hover { color: var(--text); }
+
+        .tab-btn.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+        }
+
+        .tab-btn.tab-relation.active {
+            color: var(--relation);
+            border-bottom-color: var(--relation);
+        }
+
+        /* hash display sits in the tab strip on the right */
+        .tab-strip-hash {
+            margin-left: auto;
+            font-size: 10px;
+            color: var(--text-muted);
+            padding: 0 16px;
+            display: flex;
+            align-items: center;
+            overflow: hidden;
+        }
+
+        .tab-strip-hash span { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+        /* Editor header (share + save) */
+        .editor-header {
+            padding: 8px 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: var(--surface);
+            flex-shrink: 0;
+        }
+
+        .btn {
+            padding: 5px 14px;
+            border: none;
+            font-family: var(--mono);
+            font-size: 10px;
+            font-weight: 500;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: all 0.15s;
+            flex-shrink: 0;
+        }
+
+        .btn-primary { background: var(--accent); color: #0e0e0e; }
+        .btn-primary:hover { background: #d4f55a; }
+        .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .btn-ghost {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-dim);
+        }
+
+        .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+        .btn-ghost:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        .btn-relation {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-dim);
+        }
+
+        .btn-relation:hover:not(:disabled) { border-color: var(--relation); color: var(--relation); }
+        .btn-relation:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        /* ── Tab panels ── */
+        .tab-panels {
+            flex: 1;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .tab-panel {
+            display: none;
+            flex: 1;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .tab-panel.active {
+            display: flex;
+        }
+
+        /* Editor */
+        .editor-area { flex: 1; overflow: hidden; position: relative; }
+
+        textarea {
+            width: 100%; height: 100%;
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--mono);
+            font-size: 13px;
+            line-height: 1.75;
+            border: none; outline: none; resize: none;
+            padding: 20px 24px;
+            letter-spacing: 0.01em;
+        }
+
+        textarea::placeholder { color: var(--text-muted); }
+
+        /* ── Relations panel ── */
+        .relations-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: var(--bg);
+        }
+
+        .rel-form {
+            padding: 16px;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            flex-shrink: 0;
+        }
+
+        .rel-form-title {
+            font-size: 10px;
+            letter-spacing: 0.15em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+        }
+
+        .rel-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .rel-field-label {
+            font-size: 9px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            flex-shrink: 0;
+            width: 28px;
+        }
+
+        /* The "from" display — read only, shows current hash */
+        .rel-from-display {
+            flex: 1;
+            font-size: 10px;
+            color: var(--text-dim);
+            background: var(--bg);
+            border: 1px solid var(--border);
+            padding: 4px 7px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* Shared autocomplete field style */
+        .rel-ac-wrap {
+            flex: 1;
+            position: relative;
+        }
+
+        .rel-ac-input {
+            width: 100%;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: var(--mono);
+            font-size: 11px;
+            padding: 4px 7px;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+
+        .rel-ac-input:focus { border-color: var(--relation); }
+
+        .rel-ac-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-top: none;
+            z-index: 50;
+            display: none;
+            max-height: 180px;
+            overflow-y: auto;
+        }
+
+        .rel-ac-dropdown.visible { display: block; }
+
+        .rel-ac-option {
+            padding: 6px 10px;
+            font-size: 11px;
+            color: var(--text-dim);
+            cursor: pointer;
+            transition: all 0.1s;
+        }
+
+        .rel-ac-option:hover, .rel-ac-option.selected {
+            background: rgba(240,168,75,0.08);
+            color: var(--relation);
+        }
+
+        /* Inline preview block */
+        .rel-preview {
+            margin: 0 16px;
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            border-top: none;
+            background: var(--surface2);
+            display: none;
+            flex-direction: column;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+
+        .rel-preview.visible { display: flex; }
+
+        .rel-preview-label {
+            font-size: 9px;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--relation);
+        }
+
+        .rel-preview-content {
+            font-size: 11px;
+            color: var(--text-dim);
+            line-height: 1.6;
+            max-height: 80px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* Fade at the bottom of truncated preview */
+        .rel-preview-content::after {
+            content: '';
+            position: absolute;
+            bottom: 0; left: 0; right: 0;
+            height: 24px;
+            background: linear-gradient(transparent, var(--surface2));
+        }
+
+        .rel-form-actions {
+            display: flex;
+            justify-content: flex-end;
+        }
+
+        /* Existing relations list */
+        .rel-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px 0;
+        }
+
+        .rel-list::-webkit-scrollbar { width: 4px; }
+        .rel-list::-webkit-scrollbar-track { background: transparent; }
+        .rel-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+        .rel-list-section {
+            padding: 8px 16px 4px;
+            font-size: 9px;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            border-top: 1px solid var(--border);
+            margin-top: 4px;
+        }
+
+        .rel-list-section:first-child { border-top: none; margin-top: 0; }
+
+        .rel-list-item {
+            display: flex;
+            align-items: flex-start;
+            padding: 7px 16px;
+            gap: 8px;
+            cursor: pointer;
+            border-left: 2px solid transparent;
+            transition: all 0.12s;
+            font-size: 11px;
+        }
+
+        .rel-list-item:hover {
+            background: rgba(240,168,75,0.05);
+            border-left-color: var(--relation);
+        }
+
+        .rel-list-item:hover .rel-target { color: var(--relation); }
+
+        .rel-list-empty {
+            padding: 16px;
+            font-size: 11px;
+            color: var(--text-muted);
+            text-align: center;
+        }
+
+        /* ── Toast ── */
+        .toast {
+            position: fixed;
+            bottom: 20px; right: 20px;
+            padding: 10px 14px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--accent);
+            font-size: 11px;
+            color: var(--text);
+            opacity: 0;
+            transform: translateY(6px);
+            transition: all 0.2s ease;
+            pointer-events: none;
+            z-index: 100;
+            max-width: 320px;
+            word-break: break-all;
+        }
+
+        .toast.show { opacity: 1; transform: translateY(0); }
+        .toast.error { border-left-color: var(--danger); }
+
+        .toast-label {
+            font-size: 10px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 3px;
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>Hatcheck</h1>
+    <div class="header-right">
+        <button class="btn btn-ghost" onclick="newObject()" title="New object in current namespace">+ New</button>
+        <button class="btn btn-ghost" onclick="triggerImport()" title="Import a shared archive">↓ Import</button>
+        <input type="file" id="import-file-input" accept=".tar.gz,.gz" style="display:none" onchange="handleImportFile(this)">
+        <div class="status">
+            <div class="status-dot"></div>
+            <span id="status-text">ready</span>
+        </div>
+    </div>
+</header>
+
+<div class="workspace">
+    <div class="panel-left" id="panel-left">
+        <div class="ns-input-wrap">
+            <span class="ns-label">ns</span>
+            <input class="ns-input" id="ns-input" type="text" placeholder="namespace"
+                   autocomplete="off"
+                   oninput="onNsInput(this.value)"
+                   onfocus="onNsFocus()"
+                   onblur="onNsBlur()">
+            <div class="ns-dropdown" id="ns-dropdown"></div>
+            <button class="ns-go" onclick="loadNamespace()">Go</button>
+        </div>
+        <div class="panel-header">
+            <span class="panel-label" id="panel-title">Names</span>
+            <span class="panel-count" id="panel-count">—</span>
+        </div>
+        <div class="tree" id="tree">
+            <div class="empty-state">Enter a namespace<br>and click Go.</div>
+        </div>
+    </div>
+
+    <div class="divider" id="divider"></div>
+
+    <div class="panel-right">
+        <div class="breadcrumb" id="breadcrumb">
+            <span style="color:var(--text-muted);font-size:11px">No selection</span>
+        </div>
+
+        <!-- Tab strip replaces the old editor-header hash display -->
+        <div class="tab-strip" id="tab-strip">
+            <button class="tab-btn active" id="tab-editor-btn" onclick="switchTab('editor')">Editor</button>
+            <button class="tab-btn tab-relation" id="tab-relation-btn" onclick="switchTab('relations')" disabled>Relations</button>
+            <div class="tab-strip-hash">
+                <span id="current-hash">—</span>
+            </div>
+        </div>
+
+        <!-- Editor header: share + save always visible above tab panels -->
+        <div class="editor-header" id="editor-header">
+            <button class="btn btn-ghost" id="share-btn" onclick="shareDocument()" disabled title="Share this document">↑ Share</button>
+            <button class="btn btn-primary" id="save-btn" onclick="saveContent()" disabled>Save</button>
+        </div>
+
+        <!-- Tab panels -->
+        <div class="tab-panels">
+
+            <!-- Editor tab -->
+            <div class="tab-panel active" id="panel-editor">
+                <div class="editor-area">
+                    <textarea id="editor"
+                        placeholder="Select a text object from the left panel to edit it.&#10;&#10;Use #hashtags to tag objects for discovery."
+                        oninput="onEditorChange()"></textarea>
+                </div>
+            </div>
+
+            <!-- Relations tab -->
+            <div class="tab-panel" id="panel-relations">
+                <div class="relations-panel">
+
+                    <!-- Create relation form -->
+                    <div class="rel-form">
+                        <div class="rel-form-title">New relation</div>
+
+                        <!-- From: current object, read-only -->
+                        <div class="rel-row">
+                            <span class="rel-field-label">from</span>
+                            <div class="rel-from-display" id="rel-from-display">—</div>
+                        </div>
+
+                        <!-- Rel: autocomplete from tag vocabulary -->
+                        <div class="rel-row">
+                            <span class="rel-field-label">rel</span>
+                            <div class="rel-ac-wrap">
+                                <input class="rel-ac-input" id="rel-type-input"
+                                       type="text" placeholder="relation type…"
+                                       autocomplete="off"
+                                       oninput="onRelTypeInput(this.value)"
+                                       onfocus="onRelTypeFocus()"
+                                       onblur="onRelTypeBlur()"
+                                       onkeydown="onRelTypeKey(event)">
+                                <div class="rel-ac-dropdown" id="rel-type-dropdown"></div>
+                            </div>
+                        </div>
+
+                        <!-- To: search across named objects -->
+                        <div class="rel-row">
+                            <span class="rel-field-label">to</span>
+                            <div class="rel-ac-wrap">
+                                <input class="rel-ac-input" id="rel-to-input"
+                                       type="text" placeholder="search objects…"
+                                       autocomplete="off"
+                                       oninput="onRelToInput(this.value)"
+                                       onfocus="onRelToFocus()"
+                                       onblur="onRelToBlur()"
+                                       onkeydown="onRelToKey(event)">
+                                <div class="rel-ac-dropdown" id="rel-to-dropdown"></div>
+                            </div>
+                        </div>
+
+                        <!-- Inline preview of selected "to" object -->
+                        <div class="rel-preview" id="rel-preview">
+                            <div class="rel-preview-label" id="rel-preview-label">Preview</div>
+                            <div class="rel-preview-content" id="rel-preview-content"></div>
+                        </div>
+
+                        <div class="rel-form-actions">
+                            <button class="btn btn-relation" id="rel-create-btn"
+                                    onclick="createRelation()" disabled>Create relation</button>
+                        </div>
+                    </div>
+
+                    <!-- Existing relations list -->
+                    <div class="rel-list" id="rel-list">
+                        <div class="rel-list-empty">No relations for this object.</div>
+                    </div>
+
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<div class="toast" id="toast">
+    <div class="toast-label" id="toast-label">Info</div>
+    <div id="toast-msg"></div>
+</div>
+
+<script>
+const API = '';  // same origin
+
+// ── State ──
+let namespace  = '';
+let nameList   = []; // [{label, hash}]
+
+// Navigation path stack.
+// Each frame: { type, label, hash, members, index }
+let pathStack  = [];
+
+let currentHash    = null;
+let currentLabel   = null;
+let editorDirty    = false;
+let currentTab     = 'editor';
+
+// ── Relations state ──
+let allTags         = [];   // tag vocabulary for rel-type picker
+let relTypeSelected = -1;   // keyboard selection index in rel-type dropdown
+let relToSelected   = -1;   // keyboard selection index in to-object dropdown
+let relToHash       = null; // hash of chosen "to" object
+let relToLabel      = null; // label of chosen "to" object
+let allNamesFlat    = [];   // [{label, hash}] across all namespaces for object search
+
+// ── Draggable divider ──
+const divider   = document.getElementById('divider');
+const panelLeft = document.getElementById('panel-left');
+let dragging = false;
+
+divider.addEventListener('mousedown', () => {
+    dragging = true;
+    divider.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+});
+
+document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const rect = panelLeft.parentElement.getBoundingClientRect();
+    const w = Math.max(140, Math.min(panelLeft.parentElement.offsetWidth - 200, e.clientX - rect.left));
+    panelLeft.style.width = w + 'px';
+});
+
+document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    divider.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+});
+
+// ── Namespace autocomplete ──
+let allNamespaces = [];
+let nsSelectedIndex = -1;
+
+async function fetchNamespaces() {
+    try {
+        const res = await fetch(`${API}/namespaces`);
+        if (res.ok) allNamespaces = await res.json();
+    } catch(e) {}
+}
+
+function onNsFocus() {
+    fetchNamespaces().then(() => renderNsDropdown(document.getElementById('ns-input').value));
+}
+
+function onNsInput(val) {
+    nsSelectedIndex = -1;
+    renderNsDropdown(val);
+}
+
+function renderNsDropdown(val) {
+    const dropdown = document.getElementById('ns-dropdown');
+    const filtered = val
+        ? allNamespaces.filter(ns => ns.toLowerCase().startsWith(val.toLowerCase()))
+        : allNamespaces;
+
+    if (filtered.length === 0) {
+        dropdown.classList.remove('visible');
+        return;
+    }
+
+    dropdown.innerHTML = filtered.map((ns, i) => `
+        <div class="ns-option ${i === nsSelectedIndex ? 'selected' : ''}"
+             onmousedown="selectNamespace('${ns}')">
+            ${ns}
+        </div>
+    `).join('');
+    dropdown.classList.add('visible');
+}
+
+function selectNamespace(ns) {
+    document.getElementById('ns-input').value = ns;
+    document.getElementById('ns-dropdown').classList.remove('visible');
+    loadNamespace();
+}
+
+function onNsBlur() {
+    setTimeout(() => {
+        document.getElementById('ns-dropdown').classList.remove('visible');
+    }, 150);
+}
+
+// ── Namespace ──
+async function loadNamespace() {
+    namespace = document.getElementById('ns-input').value.trim();
+    if (!namespace) return;
+
+    pathStack    = [];
+    currentHash  = null;
+    currentLabel = null;
+    editorDirty  = false;
+    renderBreadcrumb();
+    renderEditor(null, null);
+
+    try {
+        const res = await fetch(`${API}/names?namespace=${encodeURIComponent(namespace)}`);
+        if (!res.ok) throw new Error('Failed to load namespace');
+        nameList = await res.json();
+        renderNameList();
+    } catch (err) {
+        showToast('Error', err.message, true);
+    }
+}
+
+function renderNameList() {
+    const tree = document.getElementById('tree');
+    document.getElementById('panel-count').textContent = nameList.length;
+    document.getElementById('panel-title').textContent = 'Names';
+
+    if (!nameList || nameList.length === 0) {
+        tree.innerHTML = '<div class="empty-state">No names in this namespace.</div>';
+        return;
+    }
+
+    tree.innerHTML = nameList.map(n => `
+        <div class="tree-item ${n.hash === currentHash ? 'active' : ''}"
+             onclick="selectName('${n.label}', '${n.hash}')">
+            <span class="tree-icon icon-name">▸</span>
+            <span class="tree-label">${n.label}</span>
+        </div>
+    `).join('');
+}
+
+// ── Navigation ──
+async function selectName(label, hash) {
+    if (editorDirty && !confirm('You have unsaved changes. Continue?')) return;
+
+    pathStack    = [{ type: 'name', label, hash, members: null, index: null }];
+    currentLabel = label;
+    editorDirty  = false;
+    await descend(hash);
+}
+
+async function descend(hash) {
+    renderBreadcrumb();
+
+    try {
+        const res = await fetch(`${API}/fetch?hash=${hash}`);
+        if (!res.ok) throw new Error('Object not found');
+        const content = await res.text();
+        const trimmed = content.trimEnd();
+
+        let parsed;
+        try { parsed = JSON.parse(trimmed); } catch(e) {}
+
+        if (Array.isArray(parsed) && parsed.every(h => typeof h === 'string')) {
+            renderCollectionPanel(parsed, hash);
+            return;
+        }
+
+        if (parsed && typeof parsed === 'object' && parsed.from && parsed.to && parsed.rel) {
+            renderEditor(hash, trimmed, true);
+            return;
+        }
+
+        renderEditor(hash, trimmed);
+
+    } catch(err) {
+        showToast('Error', err.message, true);
+    }
+}
+
+function renderCollectionPanel(members, collectionHash) {
+    const tree = document.getElementById('tree');
+    document.getElementById('panel-count').textContent = members.length;
+    document.getElementById('panel-title').textContent = 'Collection';
+
+    if (members.length === 0) {
+        tree.innerHTML = '<div class="empty-state">Empty collection.</div>';
+        return;
+    }
+
+    pathStack[pathStack.length - 1].members = members;
+
+    tree.innerHTML = members.map((hash, i) => `
+        <div class="tree-item ${hash === currentHash ? 'active' : ''}"
+             onclick="selectMember(${i}, '${hash}')">
+            <span class="tree-icon icon-object">·</span>
+            <span class="tree-label">${hash}</span>
+        </div>
+    `).join('');
+}
+
+async function selectMember(index, hash) {
+    if (editorDirty && !confirm('You have unsaved changes. Continue?')) return;
+
+    const parent = pathStack[pathStack.length - 1];
+    parent.index = index;
+
+    pathStack.push({ type: 'collection', label: hash.slice(0, 8) + '…', hash, members: null, index: null });
+    editorDirty = false;
+    await descend(hash);
+}
+
+async function navigateTo(depth) {
+    if (editorDirty && !confirm('You have unsaved changes. Continue?')) return;
+
+    pathStack = pathStack.slice(0, depth + 1);
+    editorDirty = false;
+
+    const frame = pathStack[pathStack.length - 1];
+    if (depth === 0) {
+        pathStack = [];
+        renderNameList();
+        renderBreadcrumb();
+        renderEditor(null, null);
+    } else {
+        await descend(frame.hash);
+    }
+}
+
+// ── Tab switching ──
+function switchTab(tab) {
+    currentTab = tab;
+
+    document.getElementById('tab-editor-btn').classList.toggle('active', tab === 'editor');
+    document.getElementById('tab-relation-btn').classList.toggle('active', tab === 'relations');
+    document.getElementById('panel-editor').classList.toggle('active', tab === 'editor');
+    document.getElementById('panel-relations').classList.toggle('active', tab === 'relations');
+
+    // Save/share only meaningful in editor tab.
+    const editorHeader = document.getElementById('editor-header');
+    editorHeader.style.display = tab === 'editor' ? '' : 'none';
+
+    if (tab === 'relations' && currentHash) {
+        loadRelationsPanel(currentHash);
+    }
+}
+
+// ── Editor ──
+function renderEditor(hash, content, readOnly = false) {
+    currentHash = hash;
+    const editor   = document.getElementById('editor');
+    const saveBtn  = document.getElementById('save-btn');
+    const shareBtn = document.getElementById('share-btn');
+    const hashEl   = document.getElementById('current-hash');
+    const relTab   = document.getElementById('tab-relation-btn');
+
+    editor.value    = content || '';
+    editor.readOnly = readOnly;
+    editor.placeholder = readOnly
+        ? 'Relation object — read only.'
+        : 'Write something here…\n\nUse #hashtags to tag objects for discovery.';
+
+    saveBtn.disabled  = readOnly || (!hash && pathStack.length === 0);
+    shareBtn.disabled = !currentLabel;
+    hashEl.textContent = hash ? hash : '—';
+    editorDirty = false;
+
+    // Enable Relations tab only when a hash is loaded.
+    relTab.disabled = !hash;
+
+    // If relations tab is currently active and we navigated to a new hash, refresh.
+    if (currentTab === 'relations' && hash) {
+        loadRelationsPanel(hash);
+    }
+
+    // Update rel-from display.
+    document.getElementById('rel-from-display').textContent = hash || '—';
+
+    // Highlight active item in tree.
+    document.querySelectorAll('.tree-item').forEach(el => {
+        el.classList.toggle('active', el.getAttribute('data-hash') === hash);
+    });
+}
+
+function onEditorChange() {
+    editorDirty = true;
+    document.getElementById('save-btn').disabled = false;
+}
+
+// ── Relations panel ──
+
+// Load and display relations for the given hash in both the panel and tree.
+async function loadRelationsPanel(hash) {
+    if (!hash) return;
+
+    // Reset create form.
+    resetRelForm();
+
+    try {
+        const res = await fetch(`${API}/relations?hash=${hash}`);
+        if (!res.ok) throw new Error('Failed to load relations');
+        const data = await res.json();
+        renderRelList(data.outgoing || [], data.incoming || []);
+        renderTreeRelations(hash, data.outgoing || [], data.incoming || []);
+    } catch(err) {
+        showToast('Error', err.message, true);
+    }
+}
+
+// Render the existing relations list inside the Relations panel.
+function renderRelList(outgoing, incoming) {
+    const list = document.getElementById('rel-list');
+
+    if (outgoing.length === 0 && incoming.length === 0) {
+        list.innerHTML = '<div class="rel-list-empty">No relations for this object.</div>';
+        return;
+    }
+
+    let html = '';
+
+    if (outgoing.length > 0) {
+        html += `<div class="rel-list-section">Outgoing</div>`;
+        html += outgoing.map(r => {
+            const label = labelForHash(r.to) || r.to.slice(0, 12) + '…';
+            return `
+                <div class="rel-list-item" onclick="navigateToHash('${r.to}')">
+                    <span class="rel-predicate">${escHtml(r.rel)}</span>
+                    <span class="rel-target">${escHtml(label)}</span>
+                </div>`;
+        }).join('');
+    }
+
+    if (incoming.length > 0) {
+        html += `<div class="rel-list-section">Incoming</div>`;
+        html += incoming.map(r => {
+            const label = labelForHash(r.from) || r.from.slice(0, 12) + '…';
+            return `
+                <div class="rel-list-item" onclick="navigateToHash('${r.from}')">
+                    <span class="rel-predicate">${escHtml(r.rel)}</span>
+                    <span class="rel-target">${escHtml(label)}</span>
+                </div>`;
+        }).join('');
+    }
+
+    list.innerHTML = html;
+}
+
+// Render relation nodes under the current object in the left tree panel.
+function renderTreeRelations(hash, outgoing, incoming) {
+    const tree = document.getElementById('tree');
+
+    // Remove any existing relations section.
+    const existing = tree.querySelector('.tree-section');
+    if (existing) existing.remove();
+
+    if (outgoing.length === 0 && incoming.length === 0) return;
+
+    let html = '<div class="tree-section">';
+
+    if (outgoing.length > 0) {
+        html += `<div class="tree-section-label">Relations →</div>`;
+        html += outgoing.map(r => {
+            const label = labelForHash(r.to) || r.to.slice(0, 12) + '…';
+            return `
+                <div class="tree-item-relation" onclick="navigateToHash('${r.to}')">
+                    <span class="rel-predicate">${escHtml(r.rel)}</span>
+                    <span class="rel-target">${escHtml(label)}</span>
+                </div>`;
+        }).join('');
+    }
+
+    if (incoming.length > 0) {
+        html += `<div class="tree-section-label">← Relations</div>`;
+        html += incoming.map(r => {
+            const label = labelForHash(r.from) || r.from.slice(0, 12) + '…';
+            return `
+                <div class="tree-item-relation" onclick="navigateToHash('${r.from}')">
+                    <span class="rel-predicate">${escHtml(r.rel)}</span>
+                    <span class="rel-target">${escHtml(label)}</span>
+                </div>`;
+        }).join('');
+    }
+
+    html += '</div>';
+    tree.insertAdjacentHTML('beforeend', html);
+}
+
+// Navigate to an object by hash — look it up in nameList first, then descend.
+async function navigateToHash(hash) {
+    if (editorDirty && !confirm('You have unsaved changes. Continue?')) return;
+
+    // Find a name for this hash in the current namespace.
+    const entry = nameList.find(n => n.hash === hash);
+    if (entry) {
+        await selectName(entry.label, hash);
+        return;
+    }
+
+    // Not in current namespace — navigate directly by hash without a name frame.
+    pathStack = [{ type: 'name', label: hash.slice(0, 8) + '…', hash, members: null, index: null }];
+    currentLabel = null;
+    editorDirty  = false;
+    await descend(hash);
+}
+
+// Resolve a hash to a label from the current nameList.
+function labelForHash(hash) {
+    const entry = nameList.find(n => n.hash === hash);
+    return entry ? entry.label : null;
+}
+
+// ── Rel-type autocomplete ──
+
+async function fetchTags() {
+    if (allTags.length > 0) return; // cached
+    try {
+        const res = await fetch(`${API}/tags`);
+        if (res.ok) allTags = await res.json();
+    } catch(e) {}
+}
+
+function onRelTypeFocus() {
+    fetchTags().then(() => renderRelTypeDropdown(document.getElementById('rel-type-input').value));
+}
+
+function onRelTypeInput(val) {
+    relTypeSelected = -1;
+    renderRelTypeDropdown(val);
+}
+
+function renderRelTypeDropdown(val) {
+    const dropdown = document.getElementById('rel-type-dropdown');
+    const filtered = val
+        ? allTags.filter(t => t.toLowerCase().startsWith(val.toLowerCase()))
+        : allTags;
+
+    if (filtered.length === 0) {
+        dropdown.classList.remove('visible');
+        return;
+    }
+
+    dropdown.innerHTML = filtered.map((t, i) => `
+        <div class="rel-ac-option ${i === relTypeSelected ? 'selected' : ''}"
+             onmousedown="selectRelType('${escAttr(t)}')">
+            ${escHtml(t)}
+        </div>
+    `).join('');
+    dropdown.classList.add('visible');
+}
+
+function selectRelType(tag) {
+    document.getElementById('rel-type-input').value = tag;
+    document.getElementById('rel-type-dropdown').classList.remove('visible');
+    updateCreateBtn();
+}
+
+function onRelTypeBlur() {
+    setTimeout(() => {
+        document.getElementById('rel-type-dropdown').classList.remove('visible');
+    }, 150);
+}
+
+function onRelTypeKey(e) {
+    const dropdown = document.getElementById('rel-type-dropdown');
+    const options  = dropdown.querySelectorAll('.rel-ac-option');
+
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        relTypeSelected = Math.min(relTypeSelected + 1, options.length - 1);
+        renderRelTypeDropdown(document.getElementById('rel-type-input').value);
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        relTypeSelected = Math.max(relTypeSelected - 1, -1);
+        renderRelTypeDropdown(document.getElementById('rel-type-input').value);
+    } else if (e.key === 'Enter') {
+        if (relTypeSelected >= 0 && options[relTypeSelected]) {
+            selectRelType(options[relTypeSelected].textContent.trim());
+        }
+        dropdown.classList.remove('visible');
+    } else if (e.key === 'Escape') {
+        dropdown.classList.remove('visible');
+    } else if (e.key === 'Tab') {
+        dropdown.classList.remove('visible');
+    }
+}
+
+// ── To-object search autocomplete ──
+
+// Fetch all names across all namespaces for object search.
+// We include the current namespace names plus any others already loaded.
+async function fetchAllNames() {
+    // Always use current namespace; expand later if needed.
+    allNamesFlat = [...nameList].map(n => ({ label: n.label, hash: n.hash }));
+}
+
+function onRelToFocus() {
+    fetchAllNames().then(() => renderRelToDropdown(document.getElementById('rel-to-input').value));
+}
+
+function onRelToInput(val) {
+    relToSelected = -1;
+    // Clear previous selection when user types again.
+    relToHash  = null;
+    relToLabel = null;
+    hideRelPreview();
+    renderRelToDropdown(val);
+    updateCreateBtn();
+}
+
+function renderRelToDropdown(val) {
+    const dropdown = document.getElementById('rel-to-dropdown');
+    const filtered = val
+        ? allNamesFlat.filter(n => n.label.toLowerCase().includes(val.toLowerCase()))
+        : allNamesFlat;
+
+    if (filtered.length === 0) {
+        dropdown.classList.remove('visible');
+        return;
+    }
+
+    dropdown.innerHTML = filtered.map((n, i) => `
+        <div class="rel-ac-option ${i === relToSelected ? 'selected' : ''}"
+             onmousedown="selectRelTarget('${escAttr(n.label)}', '${escAttr(n.hash)}')">
+            ${escHtml(n.label)}
+        </div>
+    `).join('');
+    dropdown.classList.add('visible');
+}
+
+async function selectRelTarget(label, hash) {
+    relToHash  = hash;
+    relToLabel = label;
+
+    document.getElementById('rel-to-input').value = label;
+    document.getElementById('rel-to-dropdown').classList.remove('visible');
+    updateCreateBtn();
+
+    // Fetch and show inline preview.
+    try {
+        const res = await fetch(`${API}/fetch?hash=${hash}`);
+        if (!res.ok) throw new Error('fetch failed');
+        const content = (await res.text()).trimEnd();
+        showRelPreview(label, content);
+    } catch(e) {
+        hideRelPreview();
+    }
+}
+
+function showRelPreview(label, content) {
+    document.getElementById('rel-preview-label').textContent = label;
+    document.getElementById('rel-preview-content').textContent = content;
+    document.getElementById('rel-preview').classList.add('visible');
+}
+
+function hideRelPreview() {
+    document.getElementById('rel-preview').classList.remove('visible');
+}
+
+function onRelToBlur() {
+    setTimeout(() => {
+        document.getElementById('rel-to-dropdown').classList.remove('visible');
+    }, 150);
+}
+
+function onRelToKey(e) {
+    const dropdown = document.getElementById('rel-to-dropdown');
+    const options  = dropdown.querySelectorAll('.rel-ac-option');
+
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        relToSelected = Math.min(relToSelected + 1, options.length - 1);
+        renderRelToDropdown(document.getElementById('rel-to-input').value);
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        relToSelected = Math.max(relToSelected - 1, -1);
+        renderRelToDropdown(document.getElementById('rel-to-input').value);
+    } else if (e.key === 'Enter') {
+        if (relToSelected >= 0 && options[relToSelected]) {
+            const opt = allNamesFlat.filter(n => {
+                const val = document.getElementById('rel-to-input').value;
+                return val ? n.label.toLowerCase().includes(val.toLowerCase()) : true;
+            })[relToSelected];
+            if (opt) selectRelTarget(opt.label, opt.hash);
+        }
+        dropdown.classList.remove('visible');
+    } else if (e.key === 'Escape') {
+        dropdown.classList.remove('visible');
+    } else if (e.key === 'Tab') {
+        dropdown.classList.remove('visible');
+    }
+}
+
+// Enable create button only when all three fields are valid.
+function updateCreateBtn() {
+    const relType = document.getElementById('rel-type-input').value.trim();
+    const btn     = document.getElementById('rel-create-btn');
+    btn.disabled  = !(currentHash && relType && relToHash);
+}
+
+// ── Create relation ──
+async function createRelation() {
+    const rel = document.getElementById('rel-type-input').value.trim();
+    if (!currentHash || !rel || !relToHash) return;
+
+    const btn = document.getElementById('rel-create-btn');
+    btn.disabled = true;
+    btn.textContent = 'Creating…';
+
+    try {
+        const res = await fetch(
+            `${API}/relation?from=${encodeURIComponent(currentHash)}&rel=${encodeURIComponent(rel)}&to=${encodeURIComponent(relToHash)}`,
+            { method: 'POST' }
+        );
+        if (!res.ok) throw new Error(await res.text());
+        const hash = (await res.text()).trim();
+
+        showToast('Relation created', hash);
+        resetRelForm();
+
+        // Refresh relations display.
+        await loadRelationsPanel(currentHash);
+
+    } catch(err) {
+        showToast('Error', err.message, true);
+    } finally {
+        btn.textContent = 'Create relation';
+        updateCreateBtn();
+    }
+}
+
+function resetRelForm() {
+    document.getElementById('rel-type-input').value = '';
+    document.getElementById('rel-to-input').value   = '';
+    relToHash  = null;
+    relToLabel = null;
+    relTypeSelected = -1;
+    relToSelected   = -1;
+    hideRelPreview();
+    updateCreateBtn();
+}
+
+// ── New object ──
+function newObject() {
+    if (!namespace) {
+        showToast('Error', 'Enter a namespace first', true);
+        return;
+    }
+    if (editorDirty && !confirm('You have unsaved changes. Continue?')) return;
+
+    pathStack    = [];
+    currentHash  = null;
+    currentLabel = null;
+    editorDirty  = false;
+    renderBreadcrumb();
+    renderEditor(null, '');
+    switchTab('editor');
+    document.getElementById('save-btn').disabled = false;
+    document.getElementById('editor').focus();
+    showToast('New object', 'Write content and click Save to stash it.');
+}
+
+// ── Save (path copying) ──
+async function saveContent() {
+    const content = document.getElementById('editor').value;
+    const saveBtn = document.getElementById('save-btn');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+
+    try {
+        const stashRes = await fetch(`${API}/stash`, { method: 'POST', body: content });
+        if (!stashRes.ok) throw new Error('Stash failed');
+        let newHash = (await stashRes.text()).trim();
+
+        for (let i = pathStack.length - 2; i >= 1; i--) {
+            const frame = pathStack[i];
+            const members = [...frame.members];
+            members[pathStack[i + 1] ? pathStack.indexOf(pathStack[i + 1]) - i - 1 : frame.index] = newHash;
+
+            const parentFrame    = pathStack[i];
+            const childIndex     = pathStack[i].index;
+            const updatedMembers = [...parentFrame.members];
+            updatedMembers[childIndex] = newHash;
+
+            const colRes = await fetch(`${API}/collection`, {
+                method: 'POST',
+                body: JSON.stringify(updatedMembers),
+                headers: { 'Content-Type': 'application/json' }
+            });
+            if (!colRes.ok) throw new Error('Collection stash failed');
+            newHash = (await colRes.text()).trim();
+        }
+
+        if (pathStack.length > 0) {
+            const nameFrame = pathStack[0];
+            const label     = nameFrame.label;
+            const nameRes   = await fetch(
+                `${API}/name?namespace=${encodeURIComponent(namespace)}&label=${encodeURIComponent(label)}&hash=${newHash}`,
+                { method: 'POST' }
+            );
+            if (!nameRes.ok) throw new Error('Name update failed');
+            currentLabel = label;
+        } else {
+            const label = prompt('Enter a name for this object:');
+            if (!label) {
+                showToast('Saved', `Hash: ${newHash}`);
+                renderEditor(newHash, content);
+                return;
+            }
+            const nameRes = await fetch(
+                `${API}/name?namespace=${encodeURIComponent(namespace)}&label=${encodeURIComponent(label)}&hash=${newHash}`,
+                { method: 'POST' }
+            );
+            if (!nameRes.ok) throw new Error('Name creation failed');
+            currentLabel = label;
+
+            const listRes = await fetch(`${API}/names?namespace=${encodeURIComponent(namespace)}`);
+            nameList = await listRes.json();
+        }
+
+        currentHash = newHash;
+        editorDirty = false;
+        renderEditor(newHash, content);
+        renderBreadcrumb();
+
+        const listRes = await fetch(`${API}/names?namespace=${encodeURIComponent(namespace)}`);
+        nameList = await listRes.json();
+
+        showToast('Saved', newHash);
+
+    } catch (err) {
+        showToast('Error', err.message, true);
+    } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save';
+    }
+}
+
+// ── Breadcrumb ──
+function renderBreadcrumb() {
+    const el = document.getElementById('breadcrumb');
+
+    if (pathStack.length === 0) {
+        el.innerHTML = `<span style="color:var(--text-muted);font-size:11px">${namespace || 'No selection'}</span>`;
+        return;
+    }
+
+    const parts = pathStack.map((frame, i) => {
+        const isLast = i === pathStack.length - 1;
+        if (isLast) {
+            return `<span class="crumb-current">${escHtml(frame.label)}</span>`;
+        }
+        return `<span class="crumb" onclick="navigateTo(${i})">${escHtml(frame.label)}</span>`;
+    });
+
+    const ns = namespace
+        ? `<span class="crumb" onclick="loadNamespace()">${escHtml(namespace)}</span><span class="crumb-sep"> / </span>`
+        : '';
+
+    el.innerHTML = ns + parts.join('<span class="crumb-sep"> / </span>');
+}
+
+// ── Share ──
+function shareDocument() {
+    if (!namespace || !currentLabel) return;
+
+    const fullName = namespace + '/' + currentLabel;
+    const url = `${API}/export?source=${encodeURIComponent(namespace)}&name=${encodeURIComponent(fullName)}`;
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = namespace + '.tar.gz';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    showToast('Sharing', `${fullName} → ${namespace}.tar.gz`);
+}
+
+// ── Import ──
+function triggerImport() {
+    document.getElementById('import-file-input').click();
+}
+
+async function handleImportFile(input) {
+    const file = input.files[0];
+    if (!file) return;
+
+    input.value = '';
+    showToast('Importing', file.name);
+
+    try {
+        const res = await fetch(`${API}/import`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/gzip' },
+            body: file,
+        });
+
+        if (!res.ok) {
+            const msg = await res.text();
+            throw new Error(msg);
+        }
+
+        const prevNamespaces = [...allNamespaces];
+        await fetchNamespaces();
+        const newNs = allNamespaces.find(ns => !prevNamespaces.includes(ns));
+
+        if (newNs) {
+            document.getElementById('ns-input').value = newNs;
+            namespace = newNs;
+            await loadNamespace();
+            showToast('Imported', `Switched to namespace: ${newNs}`);
+        } else {
+            showToast('Imported', file.name);
+        }
+
+    } catch (err) {
+        showToast('Import failed', err.message, true);
+    }
+}
+
+// ── Toast ──
+function showToast(label, msg, isError = false) {
+    const toast = document.getElementById('toast');
+    document.getElementById('toast-label').textContent = label;
+    document.getElementById('toast-msg').textContent   = msg;
+    toast.classList.toggle('error', isError);
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 3000);
+}
+
+// ── Helpers ──
+function escHtml(str) {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function escAttr(str) {
+    return String(str).replace(/'/g, "\\'");
+}
+
+// ── Keyboard nav: namespace input ──
+document.getElementById('ns-input').addEventListener('keydown', e => {
+    const dropdown = document.getElementById('ns-dropdown');
+    const options  = dropdown.querySelectorAll('.ns-option');
+
+    if (e.key === 'Enter') {
+        if (nsSelectedIndex >= 0 && options[nsSelectedIndex]) {
+            selectNamespace(options[nsSelectedIndex].textContent.trim());
+        } else {
+            loadNamespace();
+        }
+        dropdown.classList.remove('visible');
+    } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        nsSelectedIndex = Math.min(nsSelectedIndex + 1, options.length - 1);
+        renderNsDropdown(document.getElementById('ns-input').value);
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        nsSelectedIndex = Math.max(nsSelectedIndex - 1, -1);
+        renderNsDropdown(document.getElementById('ns-input').value);
+    } else if (e.key === 'Escape') {
+        dropdown.classList.remove('visible');
+    }
+});
+</script>
+</body>
+</html>

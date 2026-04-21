@@ -1,13 +1,12 @@
-# VS Code
-.vscode/
-.code-workspace
-
 # Hatcheck
+hatcheck
 /objects/
+/metadata/
 
 # VS Code
 .vscode/
-.code-workspace
+*.code-workspace
+.markdownlint.json
 
 # local env files
 .env*.local
