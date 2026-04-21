@@ -1,7 +1,7 @@
 package main
 
 import (
-	"crypto/md5"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -439,7 +439,7 @@ func main() {
 	// Create the CAS store.
 	store, err := cas.New(objPath,
 		func(content string) string {
-			sum := md5.Sum([]byte(content))
+			sum := sha256.Sum256([]byte(content))
 			return hex.EncodeToString(sum[:])
 		},
 	)
