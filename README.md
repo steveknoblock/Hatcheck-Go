@@ -1,8 +1,8 @@
 # Hatcheck
 
-A minimal content addressable storage system (CAS) exposed to a web interface.
+Your content. On the web. As Markdown and JSON objects.
 
-Your content. On the web. As JSON objects. A simple content addressable storage system exposed to a web interface.
+Hatcheck is a minimal content addressable object store for documents with a metadata system to enable finding and connecting objects through semantic relationships. The default content type for Hatcheck is plain text, with the default formats being Markdown and JSON. The content store is exposed through a web applications interface.
 
 ## Getting Started
 

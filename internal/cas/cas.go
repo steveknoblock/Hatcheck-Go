@@ -31,7 +31,9 @@ func (store *Store) Stash(content string) (string, error) {
 
 	// Create hash of content.
 
-	// Hash content using provided hash function.
+	// Hash content using hash function passed to store.
+	// The hash function is defined by the caller and can be any function
+	// that takes a string and returns a string.
 	hash := store.hashFunc(content)
 
 	// Create shard and file name from hash.
