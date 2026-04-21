@@ -46,10 +46,11 @@ type RelationPayload struct {
 }
 
 type CapabilityPayload struct {
-    Hash    string `json:"hash"`
-    Perm    string `json:"perm"`    // "read", "write", etc.
-    Expires string `json:"expires"`
-    Sig     string `json:"sig"`
+    Hash      string    `json:"hash"`
+    Perm      string    `json:"perm"`
+    Expires   time.Time `json:"expires"`
+    Principal string    `json:"principal,omitempty"`
+    Sig       string    `json:"sig"`
 }
 
 type NamePayload struct {
