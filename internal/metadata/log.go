@@ -38,6 +38,12 @@ type CollectionPayload struct {
 	Hashes []string `json:"hashes"`
 }
 
+type ContextPayload struct {
+	Hash        string   `json:"hash"`
+	ShiftedFrom string   `json:"shifted_from"`
+	Hashes      []string `json:"hashes"`
+}
+
 type RelationPayload struct {
 	Hash string `json:"hash"`
 	From string `json:"from"`
@@ -46,11 +52,11 @@ type RelationPayload struct {
 }
 
 type CapabilityPayload struct {
-    Hash      string    `json:"hash"`
-    Perm      string    `json:"perm"`
-    Expires   time.Time `json:"expires"`
-    Principal string    `json:"principal,omitempty"`
-    Sig       string    `json:"sig"`
+	Hash      string    `json:"hash"`
+	Perm      string    `json:"perm"`
+	Expires   time.Time `json:"expires"`
+	Principal string    `json:"principal,omitempty"`
+	Sig       string    `json:"sig"`
 }
 
 type NamePayload struct {
