@@ -64,11 +64,6 @@ The Content Addressable Store stores and retrieves objects containing plain text
 
 Start with objects. Objects contain plain text. Storing an object returns a hash uniquely identifying the object. Some objects store information about relationships between objects. Collections are an ordered sequence of object identifiers (hashes). Relations specify a from object, a relationship label, and a to object. Objects are identified by their hashes. A Stash operation stores plain text. A A Collection operation stores a JSON array of hashes. A Relation stores a JSON object with "from," "relationship," and "to" fields. A Name is used to provide a human readable handle for structures of objects. Names are stored in the Log metadata.
 
-
-
-
-
-
 ### Stash (Object)
 
 A Stash creates a plain text object in the Object Store.
