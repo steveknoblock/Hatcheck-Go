@@ -1,13 +1,15 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
+	"time"
 
 	"github.com/steveknoblock/hatcheck-go/internal/cas"
 	"github.com/steveknoblock/hatcheck-go/internal/metadata"
@@ -21,7 +23,7 @@ const (
 	PermAdmin = "admin"
 )
 
-func stashHandler(w http.ResponseWriter, req *http.Request, objPath string, meta *metadata.Store, vr VerifiedRequest) {
+func stashHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, vr VerifiedRequest) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -36,7 +38,7 @@ func stashHandler(w http.ResponseWriter, req *http.Request, objPath string, meta
 
 	content := string(body)
 
-	hash, err := cas.Stash(content, objPath)
+	hash, err := store.Stash(content)
 	if err != nil {
 		http.Error(w, "failed to stash content", http.StatusInternalServerError)
 		return
@@ -56,7 +58,7 @@ func stashHandler(w http.ResponseWriter, req *http.Request, objPath string, meta
 	fmt.Fprintf(w, "%s\n", hash)
 }
 
-func fetchHandler(w http.ResponseWriter, req *http.Request, objPath string, vr VerifiedRequest) {
+func fetchHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, vr VerifiedRequest) {
 	if req.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -74,7 +76,7 @@ func fetchHandler(w http.ResponseWriter, req *http.Request, objPath string, vr V
 		return
 	}
 
-	data, err := cas.Fetch(hash, objPath)
+	data, err := store.Fetch(hash)
 	if err != nil {
 		http.Error(w, "content not found", http.StatusNotFound)
 		return
@@ -84,26 +86,13 @@ func fetchHandler(w http.ResponseWriter, req *http.Request, objPath string, vr V
 	fmt.Fprintf(w, "%s\n", data)
 }
 
-func listHandler(w http.ResponseWriter, req *http.Request, objPath string, meta *metadata.Store, vr VerifiedRequest) {
+func listHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, vr VerifiedRequest) {
 	if req.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	var hashes []string
-
-	err := filepath.Walk(objPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() {
-			shard := filepath.Base(filepath.Dir(path))
-			file := filepath.Base(path)
-			hashes = append(hashes, shard+file)
-		}
-		return nil
-	})
-
+	hashes, err := store.List()
 	if err != nil {
 		http.Error(w, "failed to list objects", http.StatusInternalServerError)
 		return
@@ -234,7 +223,7 @@ func nameHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store,
 
 // collectionHandler stashes a Collection object and returns its hash.
 // POST /collection — body is a JSON array of hashes
-func collectionHandler(w http.ResponseWriter, req *http.Request, objPath string, meta *metadata.Store, vr VerifiedRequest) {
+func collectionHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, vr VerifiedRequest) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -254,7 +243,7 @@ func collectionHandler(w http.ResponseWriter, req *http.Request, objPath string,
 	}
 
 	content := string(body)
-	hash, err := cas.Stash(content, objPath)
+	hash, err := store.Stash(content)
 	if err != nil {
 		http.Error(w, "failed to stash collection", http.StatusInternalServerError)
 		return
@@ -387,7 +376,7 @@ func issueHandler(w http.ResponseWriter, req *http.Request, key []byte, meta *me
 // revokeHandler records the revocation of a capability and updates the live
 // revocation index. The capability ID is required; reason is optional.
 // POST /capability/revoke?id=<capability-id>&reason=<reason>
-func revokeHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, revoked metadata.RevokedSet, vr VerifiedRequest) {
+func revokeHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, revoked *metadata.RevokedSet, vr VerifiedRequest) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -431,6 +420,15 @@ func main() {
 		log.Fatal("HATCHECK_SIGNING_KEY environment variable must be set")
 	}
 
+	// Initialise the CAS with a SHA-256 hash function.
+	store, err := cas.New(objPath, func(content string) string {
+		sum := sha256.Sum256([]byte(content))
+		return hex.EncodeToString(sum[:])
+	})
+	if err != nil {
+		log.Fatalf("failed to initialise object store: %v", err)
+	}
+
 	meta, err := metadata.New(metaPath,
 		&metadata.TagIndex{},
 		&metadata.DateIndex{},
@@ -448,18 +446,19 @@ func main() {
 	}
 
 	cm := &CapabilityMiddleware{
-		Key:     signingKey,
-		Revoked: revoked,
+		Key:            signingKey,
+		Revoked:        revoked,
+		BootstrapToken: os.Getenv("HATCHECK_BOOTSTRAP_TOKEN"),
 	}
 
 	http.HandleFunc("/stash", cm.Protect(PermWrite, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		stashHandler(w, req, objPath, meta, vr)
+		stashHandler(w, req, store, meta, vr)
 	}))
 	http.HandleFunc("/fetch", cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		fetchHandler(w, req, objPath, vr)
+		fetchHandler(w, req, store, vr)
 	}))
 	http.HandleFunc("/list", cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		listHandler(w, req, objPath, meta, vr)
+		listHandler(w, req, store, meta, vr)
 	}))
 	http.HandleFunc("/query", cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		queryHandler(w, req, meta, vr)
@@ -474,7 +473,7 @@ func main() {
 		nameHandler(w, req, meta, vr)
 	}))
 	http.HandleFunc("/collection", cm.Protect(PermWrite, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		collectionHandler(w, req, objPath, meta, vr)
+		collectionHandler(w, req, store, meta, vr)
 	}))
 	http.HandleFunc("/export", cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		exportHandler(w, req, objPath, metaPath, vr)
@@ -482,7 +481,6 @@ func main() {
 	http.HandleFunc("/import", cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		importHandler(w, req, objPath, metaPath, vr)
 	}))
-
 	http.HandleFunc("/capability", cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		issueHandler(w, req, cm.Key, meta, vr)
 	}))

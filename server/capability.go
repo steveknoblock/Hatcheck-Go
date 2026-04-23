@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/hmac"
 	"encoding/json"
 	"net/http"
 
@@ -9,9 +10,13 @@ import (
 
 // CapabilityMiddleware holds the signing key and revocation index
 // needed to verify capability tokens on every request.
+// BootstrapToken, if set, is a shared secret that grants PermAdmin access
+// without a signed capability. It is intended for first-time setup only
+// and should be rotated or unset once real admin capabilities are issued.
 type CapabilityMiddleware struct {
-	Key     []byte
-	Revoked *metadata.RevokedSet
+	Key            []byte
+	Revoked        *metadata.RevokedSet
+	BootstrapToken string
 }
 
 // VerifiedRequest carries the verified capability and principal
@@ -38,16 +43,37 @@ func (cm *CapabilityMiddleware) Protect(
 			return
 		}
 
+		// Bootstrap token check — grants PermAdmin without a signed capability.
+		// Only active when HATCHECK_BOOTSTRAP_TOKEN is set. Should be unset
+		// once real admin capabilities have been issued.
+		if cm.BootstrapToken != "" {
+			token := req.Header.Get("X-Bootstrap-Token")
+			if token != "" {
+				if !hmac.Equal([]byte(token), []byte(cm.BootstrapToken)) {
+					http.Error(w, "invalid bootstrap token", http.StatusForbidden)
+					return
+				}
+				if perm != PermAdmin {
+					http.Error(w, "bootstrap token only grants admin access", http.StatusForbidden)
+					return
+				}
+				inner(w, req, VerifiedRequest{
+					Principal: principal,
+				})
+				return
+			}
+		}
+
 		// Extract capability token from header.
-		token := req.Header.Get("X-Capability-Token")
-		if token == "" {
+		capToken := req.Header.Get("X-Capability-Token")
+		if capToken == "" {
 			http.Error(w, "missing capability token", http.StatusUnauthorized)
 			return
 		}
 
 		// Decode the capability payload from the token.
 		var cap metadata.CapabilityPayload
-		if err := json.Unmarshal([]byte(token), &cap); err != nil {
+		if err := json.Unmarshal([]byte(capToken), &cap); err != nil {
 			http.Error(w, "malformed capability token", http.StatusBadRequest)
 			return
 		}
