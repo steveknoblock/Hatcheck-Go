@@ -143,18 +143,31 @@ func VerifyCapability(key []byte, cap CapabilityPayload, principal string) bool 
 
 // --- Revocation index ---
 
-// RevokedSet is an in-memory set of revoked capability IDs built from the log
-// at startup and updated as new revocation entries arrive.
-type RevokedSet map[string]struct{}
-
-// Add marks a capability ID as revoked.
-func (r RevokedSet) Add(id string) {
-	r[id] = struct{}{}
+// RevokedSet is a concurrency-safe in-memory set of revoked capability IDs.
+// It is built from the log at startup and updated as new revocation entries
+// arrive during the lifetime of the server.
+type RevokedSet struct {
+	mu  sync.RWMutex
+	ids map[string]struct{}
 }
 
-// IsRevoked reports whether a capability ID has been revoked.
-func (r RevokedSet) IsRevoked(id string) bool {
-	_, ok := r[id]
+// NewRevokedSet returns an initialised RevokedSet ready for use.
+func NewRevokedSet() *RevokedSet {
+	return &RevokedSet{ids: make(map[string]struct{})}
+}
+
+// Add marks a capability ID as revoked. Safe for concurrent use.
+func (r *RevokedSet) Add(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ids[id] = struct{}{}
+}
+
+// IsRevoked reports whether a capability ID has been revoked. Safe for concurrent use.
+func (r *RevokedSet) IsRevoked(id string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.ids[id]
 	return ok
 }
 
