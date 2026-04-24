@@ -227,3 +227,66 @@ All objects tagged #ideas stashed this week — intersect both results
 
 There are four built-in indexes: tag, date, name, and relation. Later, if you think of another useful projection, for example, an index by content size, or by which tags co-occur, you just add another index built from the same log. You don't change the log format or lose any history.
 This is essentially what a database does internally when you add an index to a table — it builds a separate data structure optimized for a specific query pattern.
+
+## Access Control
+
+Authorization is capability-based. Users are assigned capabilities. Objects are secured by capabilities.
+
+A Capability has a unique identifier computed from id, hash, perm, principal string, expires time.Time
+
+When a capability is issued, a log entry is written with Op: "capability" and a CapabilityPayload as the payload:
+
+type CapabilityPayload struct {
+    ID        string    `json:"id"`
+    Hash      string    `json:"hash"`
+    Perm      string    `json:"perm"`
+    Expires   time.Time `json:"expires"`
+    Principal string    `json:"principal,omitempty"`
+    Sig       string    `json:"sig"`
+}
+
+### Benefits of the Capability Log Entry
+
+By including capability changes in the event source log, it becomes possible to replay the log to see every capability ever issued, the user it was issued to, the object it was issued for, and what permission it was issued. Revocation of a capability is recorded in the log.
+
+The capability ID is a hash of the content fields, while Sig is an HMAC over the same fields using the server secret. They are complementary:
+
+ID — identifies the capability, can be computed by anyone
+Sig — proves the capability was issued by the server, requires the secret key
+Key Properties
+Unforgeability — capabilities must be cryptographically signed or otherwise impossible to fabricate. This is what gives them their authority.
+Transferability — you can give your capability to someone else, and they can use it without any identity check. This is powerful but also requires careful thought about whether you want this.
+Attenuation — you can derive a weaker capability from a stronger one. If you have read/write access, you can mint a read-only capability to share with someone else, but you cannot mint capabilities that exceed your own permissions.
+No ambient authority — unlike identity-based systems, there is no implicit "logged in user has access to their stuff." Access requires explicitly presenting a capability.
+So the ID field doesn't replace the Sig, it sits alongside it. 
+
+Capabilities are bound to a specific object and refer to the specific object they authorize by the object hash.
+
+### Why Shared Hashes Aren't a Problem
+
+If two users store identical content, they arrive at the same hash by definition. But any user who holds that hash already possesses the content — they submitted it in the first place. So retrieving it from the store reveals nothing they didn't already know.
+The store is just returning what they gave it. There's no information leakage.
+
+### The Capability Model
+
+Think of a physical key. A door doesn't know your identity or check a list of approved people — it just checks whether the key fits. Whoever holds the key can open the door. The key is the capability.
+
+In a capability system, the question is simply:
+
+"Does the requester hold a valid capability for this object?"
+
+The capability itself is the proof of authorization. If you have it, you can use it. The system doesn't need to know who you are.
+
+A capability model maps very naturally onto a content addressable store:
+
+The hash of the object is already a reference — you can build a capability directly around it
+Since objects are immutable, capabilities don't need to handle "the object changed" scenarios
+You can issue read capabilities for specific hashes and share them freely without exposing the whole store
+Attenuation lets you share a subtree of content with a third party with scoped permissions
+
+### Structure of a Capability
+
+A capability typically encodes three things:
+
+[ object reference | permitted operations | unforgeable proof ]
+
