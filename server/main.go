@@ -420,13 +420,13 @@ func main() {
 		log.Fatal("HATCHECK_SIGNING_KEY environment variable must be set")
 	}
 
-	// Initialise the CAS with a SHA-256 hash function.
+	// Initialize the CAS with a SHA-256 hash function.
 	store, err := cas.New(objPath, func(content string) string {
 		sum := md5.Sum([]byte(content))
 		return hex.EncodeToString(sum[:])
 	})
 	if err != nil {
-		log.Fatalf("failed to initialise object store: %v", err)
+		log.Fatalf("failed to initialize object store: %v", err)
 	}
 
 	meta, err := metadata.New(metaPath,
