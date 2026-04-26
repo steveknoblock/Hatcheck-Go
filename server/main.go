@@ -324,6 +324,100 @@ func importHandler(w http.ResponseWriter, req *http.Request, objPath, metaPath s
 	fmt.Fprintln(w, "import successful")
 }
 
+// relationHandler stashes a Relation object and logs it to the metadata store.
+// POST /relation?from=<hash>&rel=<predicate>&to=<hash>
+func relationHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, vr VerifiedRequest) {
+	if req.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	from := req.URL.Query().Get("from")
+	rel := req.URL.Query().Get("rel")
+	to := req.URL.Query().Get("to")
+
+	if from == "" || rel == "" || to == "" {
+		http.Error(w, "missing from, rel, or to parameter", http.StatusBadRequest)
+		return
+	}
+
+	type relationObject struct {
+		From string `json:"from"`
+		Rel  string `json:"rel"`
+		To   string `json:"to"`
+	}
+	content, err := json.Marshal(relationObject{From: from, Rel: rel, To: to})
+	if err != nil {
+		http.Error(w, "failed to marshal relation", http.StatusInternalServerError)
+		return
+	}
+
+	hash, err := store.Stash(string(content))
+	if err != nil {
+		http.Error(w, "failed to stash relation", http.StatusInternalServerError)
+		return
+	}
+
+	if err := meta.AppendRelation(hash, from, rel, to); err != nil {
+		log.Printf("warning: failed to append relation metadata for %s: %v", hash, err)
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	fmt.Fprintf(w, "%s\n", hash)
+}
+
+// relationsHandler returns all outgoing and incoming relations for a given hash.
+// GET /relations?hash=<hash>
+func relationsHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, vr VerifiedRequest) {
+	if req.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	hash := req.URL.Query().Get("hash")
+	if hash == "" {
+		http.Error(w, "missing hash parameter", http.StatusBadRequest)
+		return
+	}
+
+	outgoing, incoming := meta.RelationsForHash(hash)
+
+	if outgoing == nil {
+		outgoing = []metadata.RelationPayload{}
+	}
+	if incoming == nil {
+		incoming = []metadata.RelationPayload{}
+	}
+
+	type relationsResponse struct {
+		Outgoing []metadata.RelationPayload `json:"outgoing"`
+		Incoming []metadata.RelationPayload `json:"incoming"`
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(relationsResponse{
+		Outgoing: outgoing,
+		Incoming: incoming,
+	})
+}
+
+// tagsHandler returns all known tag keys from the tag index.
+// GET /tags
+func tagsHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, vr VerifiedRequest) {
+	if req.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	tags := meta.AllTags()
+	if tags == nil {
+		tags = []string{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tags)
+}
+
 // issueHandler creates and signs a new capability for the given principal,
 // records it in the log, and returns the serialized CapabilityPayload to the
 // caller. Only principals with PermAdmin may issue capabilities.
@@ -420,20 +514,20 @@ func main() {
 		log.Fatal("HATCHECK_SIGNING_KEY environment variable must be set")
 	}
 
-	// Initialize the CAS with a SHA-256 hash function.
+	// Initialise the CAS with a SHA-256 hash function.
 	store, err := cas.New(objPath, func(content string) string {
 		sum := md5.Sum([]byte(content))
 		return hex.EncodeToString(sum[:])
 	})
 	if err != nil {
-		log.Fatalf("failed to initialize object store: %v", err)
+		log.Fatalf("failed to initialise object store: %v", err)
 	}
 
 	meta, err := metadata.New(metaPath,
-		&metadata.TagIndex{},
-		&metadata.DateIndex{},
-		&metadata.NameIndex{},
-		&metadata.RelationIndex{},
+		metadata.NewTagIndex(),
+		metadata.NewDateIndex(),
+		metadata.NewNameIndex(),
+		metadata.NewRelationIndex(),
 	)
 	if err != nil {
 		log.Fatalf("failed to load metadata store: %v", err)
@@ -475,12 +569,23 @@ func main() {
 	http.HandleFunc("/collection", cm.Protect(PermWrite, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		collectionHandler(w, req, store, meta, vr)
 	}))
+	http.HandleFunc("/relation", cm.Protect(PermWrite, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+		relationHandler(w, req, store, meta, vr)
+	}))
+	http.HandleFunc("/relations", cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+		relationsHandler(w, req, meta, vr)
+	}))
+	http.HandleFunc("/tags", cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+		tagsHandler(w, req, meta, vr)
+	}))
 	http.HandleFunc("/export", cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		exportHandler(w, req, objPath, metaPath, vr)
 	}))
 	http.HandleFunc("/import", cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		importHandler(w, req, objPath, metaPath, vr)
 	}))
+	// POST /capability issues a new capability. Other methods return 405.
+	// GET /capability (capability lookup by ID) is not currently implemented.
 	http.HandleFunc("/capability", cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		issueHandler(w, req, cm.Key, meta, vr)
 	}))
