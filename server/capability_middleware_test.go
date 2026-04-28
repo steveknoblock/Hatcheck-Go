@@ -34,7 +34,7 @@ func newTestMiddlewareWithBootstrap(t *testing.T, token string) *CapabilityMiddl
 // signedCapToken returns a JSON-encoded capability token for use in requests.
 func signedCapToken(t *testing.T, hash, perm, principal string, expires time.Time) string {
 	t.Helper()
-	cap := metadata.SignCapability(middlewareKey, hash, perm, principal, expires)
+	cap := metadata.SignCapability(middlewareKey, hash, perm, principal, "", expires)
 	b, err := json.Marshal(cap)
 	if err != nil {
 		t.Fatalf("failed to marshal capability: %v", err)
@@ -213,7 +213,7 @@ func TestProtect_RevokedCapability(t *testing.T) {
 	handler := cm.Protect(PermRead, innerOK(&called))
 
 	expires := futureExpiry()
-	cap := metadata.SignCapability(middlewareKey, "hash1", PermRead, "alice", expires)
+	cap := metadata.SignCapability(middlewareKey, "hash1", PermRead, "alice", "", expires)
 	cm.Revoked.Add(cap.ID)
 
 	b, _ := json.Marshal(cap)

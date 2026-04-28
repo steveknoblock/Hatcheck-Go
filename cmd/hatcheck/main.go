@@ -376,12 +376,14 @@ func runCapabilityIssue(args []string, metaPath string, signingKey []byte) {
 	hash := fs.String("hash", "", "Object hash to grant access to (required)")
 	perm := fs.String("perm", "", "Permission to grant: read or write (required)")
 	principal := fs.String("principal", "", "User ID to grant the capability to (required)")
+	email := fs.String("email", "", "Email address for display (optional, requires user opt-in)")
 	ttl := fs.Duration("ttl", 24*time.Hour, "How long the capability is valid (e.g. 24h, 7*24h)")
 	jsonOut := fs.Bool("json", false, "Output the full capability payload as JSON")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "Usage: hatcheck capability issue -hash <hash> -perm <read|write> -principal <user-id> [-ttl <duration>] [-json]")
+		fmt.Fprintln(os.Stderr, "Usage: hatcheck capability issue -hash <hash> -perm <read|write> -principal <user-id> [-email <email>] [-ttl <duration>] [-json]")
 		fmt.Fprintln(os.Stderr, "Examples:")
 		fmt.Fprintln(os.Stderr, "  hatcheck capability issue -hash abc123 -perm read -principal alice")
+		fmt.Fprintln(os.Stderr, "  hatcheck capability issue -hash abc123 -perm read -principal alice -email alice@example.com")
 		fmt.Fprintln(os.Stderr, "  hatcheck capability issue -hash abc123 -perm write -principal bob -ttl 168h")
 		fs.PrintDefaults()
 	}
@@ -399,7 +401,7 @@ func runCapabilityIssue(args []string, metaPath string, signingKey []byte) {
 	}
 
 	expires := time.Now().UTC().Add(*ttl)
-	cap := metadata.SignCapability(signingKey, *hash, *perm, *principal, expires)
+	cap := metadata.SignCapability(signingKey, *hash, *perm, *principal, *email, expires)
 
 	meta, err := metadata.New(metaPath, &metadata.TagIndex{}, &metadata.DateIndex{}, &metadata.NameIndex{}, &metadata.RelationIndex{})
 	if err != nil {

@@ -432,6 +432,7 @@ func issueHandler(w http.ResponseWriter, req *http.Request, key []byte, meta *me
 	perm := req.URL.Query().Get("perm")
 	principal := req.URL.Query().Get("principal")
 	expiresStr := req.URL.Query().Get("expires")
+	email := req.URL.Query().Get("email") // optional — empty if user has not opted in
 
 	if hash == "" || perm == "" || principal == "" || expiresStr == "" {
 		http.Error(w, "missing required parameter: hash, perm, principal, expires", http.StatusBadRequest)
@@ -455,7 +456,7 @@ func issueHandler(w http.ResponseWriter, req *http.Request, key []byte, meta *me
 		return
 	}
 
-	cap := metadata.SignCapability(key, hash, perm, principal, expires)
+	cap := metadata.SignCapability(key, hash, perm, principal, email, expires)
 
 	if err := meta.AppendCapability(cap); err != nil {
 		http.Error(w, "failed to record capability: "+err.Error(), http.StatusInternalServerError)

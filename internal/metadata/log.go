@@ -62,12 +62,17 @@ type RelationPayload struct {
 // the server secret, covering ID, Hash, Perm, Principal, and Expires together.
 //
 // Principal is optional; when omitted the capability acts as a bearer token.
+//
+// Email is an optional human-readable annotation stored only when the user
+// has opted in. It is not included in the signing message and carries no
+// authority — Principal is the authoritative identifier for verification.
 type CapabilityPayload struct {
 	ID        string    `json:"id"`
 	Hash      string    `json:"hash"`
 	Perm      string    `json:"perm"`
 	Expires   time.Time `json:"expires"`
 	Principal string    `json:"principal,omitempty"`
+	Email     string    `json:"email,omitempty"`
 	Sig       string    `json:"sig"`
 }
 
@@ -104,7 +109,10 @@ func CapabilityID(hash, perm, principal string, expires time.Time) string {
 }
 
 // SignCapability issues a new CapabilityPayload signed with the provided key.
-func SignCapability(key []byte, hash, perm, principal string, expires time.Time) CapabilityPayload {
+// email is optional — pass an empty string if the user has not opted in to
+// email storage. It is stored as a display annotation only and is not
+// included in the signing message.
+func SignCapability(key []byte, hash, perm, principal, email string, expires time.Time) CapabilityPayload {
 	id := CapabilityID(hash, perm, principal, expires)
 	msg := capabilityMessage(id, hash, perm, principal, expires)
 	mac := hmac.New(sha256.New, key)
@@ -116,6 +124,7 @@ func SignCapability(key []byte, hash, perm, principal string, expires time.Time)
 		Perm:      perm,
 		Expires:   expires,
 		Principal: principal,
+		Email:     email,
 		Sig:       sig,
 	}
 }
