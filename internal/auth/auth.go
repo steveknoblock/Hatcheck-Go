@@ -31,6 +31,7 @@ func sendLoginHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func authenticateHandler(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
 	payload := map[string]any{
 		"token":                    token,
 		"session_duration_minutes": 60,
@@ -43,6 +44,7 @@ func authenticateHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func dashboardHandler(w http.ResponseWriter, r *http.Request) {
+	sessionJWT := r.Header.Get("Authorization")
 	payload := map[string]any{"session_jwt": sessionJWT}
 	body, _ := json.Marshal(payload)
 
