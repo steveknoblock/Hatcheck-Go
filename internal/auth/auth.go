@@ -19,7 +19,7 @@ func main() {
 // requests shown above.
 func sendLoginHandler(w http.ResponseWriter, r *http.Request) {
 	payload := map[string]any{
-		"email":                 email,
+		"email":                 "steve.knoblock@gmail.com",
 		"login_magic_link_url":  "http://localhost:3000/authenticate",
 		"signup_magic_link_url": "http://localhost:3000/authenticate",
 	}
