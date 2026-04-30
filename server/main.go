@@ -11,6 +11,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/steveknoblock/hatcheck-go/internal/auth"
 	"github.com/steveknoblock/hatcheck-go/internal/cas"
 	"github.com/steveknoblock/hatcheck-go/internal/metadata"
 	"github.com/steveknoblock/hatcheck-go/internal/share"
@@ -546,53 +547,71 @@ func main() {
 		BootstrapToken: os.Getenv("HATCHECK_BOOTSTRAP_TOKEN"),
 	}
 
-	http.HandleFunc("/stash", cm.Protect(PermWrite, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	// Initialise the Stytch auth client.
+	authClient, err := auth.NewClient()
+	if err != nil {
+		log.Fatalf("failed to initialise auth client: %v", err)
+	}
+
+	am := &AuthMiddleware{Client: authClient}
+
+	// Auth routes — not capability protected, but also not JWT protected
+	// since these are the routes that establish identity in the first place.
+	http.HandleFunc("/auth/login", func(w http.ResponseWriter, req *http.Request) {
+		loginHandler(w, req, authClient)
+	})
+	http.HandleFunc("/auth/authenticate", func(w http.ResponseWriter, req *http.Request) {
+		authenticateHandler(w, req, authClient)
+	})
+	http.HandleFunc("/auth/logout", logoutHandler)
+
+	http.HandleFunc("/stash", am.Wrap(cm.Protect(PermWrite, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		stashHandler(w, req, store, meta, vr)
-	}))
-	http.HandleFunc("/fetch", cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	})))
+	http.HandleFunc("/fetch", am.Wrap(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		fetchHandler(w, req, store, vr)
-	}))
-	http.HandleFunc("/list", cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	})))
+	http.HandleFunc("/list", am.Wrap(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		listHandler(w, req, store, meta, vr)
-	}))
-	http.HandleFunc("/query", cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	})))
+	http.HandleFunc("/query", am.Wrap(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		queryHandler(w, req, meta, vr)
-	}))
-	http.HandleFunc("/namespaces", cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	})))
+	http.HandleFunc("/namespaces", am.Wrap(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		namespacesHandler(w, req, meta, vr)
-	}))
-	http.HandleFunc("/names", cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	})))
+	http.HandleFunc("/names", am.Wrap(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		namesHandler(w, req, meta, vr)
-	}))
-	http.HandleFunc("/name", cm.Protect(PermWrite, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	})))
+	http.HandleFunc("/name", am.Wrap(cm.Protect(PermWrite, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		nameHandler(w, req, meta, vr)
-	}))
-	http.HandleFunc("/collection", cm.Protect(PermWrite, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	})))
+	http.HandleFunc("/collection", am.Wrap(cm.Protect(PermWrite, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		collectionHandler(w, req, store, meta, vr)
-	}))
-	http.HandleFunc("/relation", cm.Protect(PermWrite, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	})))
+	http.HandleFunc("/relation", am.Wrap(cm.Protect(PermWrite, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		relationHandler(w, req, store, meta, vr)
-	}))
-	http.HandleFunc("/relations", cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	})))
+	http.HandleFunc("/relations", am.Wrap(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		relationsHandler(w, req, meta, vr)
-	}))
-	http.HandleFunc("/tags", cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	})))
+	http.HandleFunc("/tags", am.Wrap(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		tagsHandler(w, req, meta, vr)
-	}))
-	http.HandleFunc("/export", cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	})))
+	http.HandleFunc("/export", am.Wrap(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		exportHandler(w, req, objPath, metaPath, vr)
-	}))
-	http.HandleFunc("/import", cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	})))
+	http.HandleFunc("/import", am.Wrap(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		importHandler(w, req, objPath, metaPath, vr)
-	}))
+	})))
 	// POST /capability issues a new capability. Other methods return 405.
 	// GET /capability (capability lookup by ID) is not currently implemented.
-	http.HandleFunc("/capability", cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	http.HandleFunc("/capability", am.Wrap(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		issueHandler(w, req, cm.Key, meta, vr)
-	}))
-	http.HandleFunc("/capability/revoke", cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	})))
+	http.HandleFunc("/capability/revoke", am.Wrap(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		revokeHandler(w, req, meta, cm.Revoked, vr)
-	}))
+	})))
 
 	http.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.Dir(uiPath))))
 
