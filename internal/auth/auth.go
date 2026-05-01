@@ -1,3 +1,5 @@
+package auth
+
 // Package auth provides Stytch-based authentication for Hatcheck.
 // It wraps the Stytch Go SDK to provide magic link sending, token
 // authentication, and session JWT validation.
@@ -7,7 +9,6 @@
 //	STYTCH_PROJECT_ID   — Stytch project ID
 //	STYTCH_SECRET       — Stytch project secret
 //	STYTCH_REDIRECT_URL — Magic link redirect URL (e.g. http://localhost:8090/auth/authenticate)
-package auth
 
 import (
 	"context"
@@ -136,9 +137,9 @@ func (c *Client) ValidateSessionJWT(ctx context.Context, sessionJWT string) (Ide
 	resp, err := c.api.Sessions.AuthenticateJWT(
 		ctx,
 		&sessions.AuthenticateJWTParams{
-			SessionJWT:                  sessionJWT,
-			SessionDurationMinutes:      SessionDurationMinutes,
-			MaxTokenAgeSeconds:          300, // 5 minutes — Stytch JWT fixed lifetime
+			SessionJWT:             sessionJWT,
+			SessionDurationMinutes: SessionDurationMinutes,
+			MaxTokenAgeSeconds:     300, // 5 minutes — Stytch JWT fixed lifetime
 		},
 	)
 	if err != nil {
