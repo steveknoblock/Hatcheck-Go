@@ -1,5 +1,3 @@
-package auth
-
 // Package auth provides Stytch-based authentication for Hatcheck.
 // It wraps the Stytch Go SDK to provide magic link sending, token
 // authentication, and session JWT validation.
@@ -9,12 +7,14 @@ package auth
 //	STYTCH_PROJECT_ID   — Stytch project ID
 //	STYTCH_SECRET       — Stytch project secret
 //	STYTCH_REDIRECT_URL — Magic link redirect URL (e.g. http://localhost:8090/auth/authenticate)
+package auth
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/stytchauth/stytch-go/v18/stytch/consumer/magiclinks"
 	emailML "github.com/stytchauth/stytch-go/v18/stytch/consumer/magiclinks/email"
@@ -23,9 +23,12 @@ import (
 )
 
 // SessionDurationMinutes is the lifetime of a Stytch session after magic link
-// authentication. The session JWT itself has a fixed 5-minute lifetime and is
-// refreshed by the client; the underlying session lasts this long.
+// authentication.
 const SessionDurationMinutes = 60 * 24 // 24 hours
+
+// maxTokenAge is the maximum age of a JWT before local validation falls back
+// to a remote Stytch API call. Stytch JWTs have a fixed 5-minute lifetime.
+const maxTokenAge = 5 * time.Minute
 
 // Identity holds the verified identity of an authenticated user extracted
 // from a Stytch session JWT. It is passed into the capability middleware
@@ -95,9 +98,9 @@ func (c *Client) SendMagicLink(ctx context.Context, email string) error {
 }
 
 // AuthenticateMagicLink exchanges a magic link token for a session JWT.
-// It returns the verified Identity and the session JWT to be returned to
-// the client. The client stores the JWT and presents it on subsequent
-// requests via the Authorization header.
+// Returns the verified Identity and the session JWT to be returned to
+// the client. The client stores the JWT and presents it as a Bearer token
+// on subsequent requests.
 func (c *Client) AuthenticateMagicLink(ctx context.Context, token string) (Identity, string, error) {
 	resp, err := c.api.MagicLinks.Authenticate(
 		ctx,
@@ -114,8 +117,9 @@ func (c *Client) AuthenticateMagicLink(ctx context.Context, token string) (Ident
 		UserID: resp.UserID,
 	}
 
-	// Populate email from the first verified email on the user object if present.
-	if resp.User != nil {
+	// Populate email from the first verified email on the user object.
+	// User is a value type in v18 — check UserID rather than nil.
+	if resp.User.UserID != "" {
 		for _, e := range resp.User.Emails {
 			if e.Verified {
 				identity.Email = e.Email
@@ -127,62 +131,31 @@ func (c *Client) AuthenticateMagicLink(ctx context.Context, token string) (Ident
 	return identity, resp.SessionJWT, nil
 }
 
-// ValidateSessionJWT validates a session JWT locally without a network call.
-// It returns the verified Identity if the JWT is valid and the session has
-// not expired. This is the hot path — called on every authenticated request.
+// ValidateSessionJWT validates a session JWT, trying local validation first
+// and falling back to a remote Stytch API call if the JWT is older than
+// maxTokenAge. This is the hot path called on every authenticated request.
 //
-// If local validation fails (e.g. JWT is near expiry), the caller should
-// fall back to ValidateSessionJWTRemote for a fresh validation against Stytch.
+// In v18, AuthenticateJWT handles both local and remote validation automatically:
+// it validates locally if the JWT is fresh, and falls back to remote if not.
 func (c *Client) ValidateSessionJWT(ctx context.Context, sessionJWT string) (Identity, error) {
 	resp, err := c.api.Sessions.AuthenticateJWT(
 		ctx,
-		&sessions.AuthenticateJWTParams{
-			SessionJWT:             sessionJWT,
-			SessionDurationMinutes: SessionDurationMinutes,
-			MaxTokenAgeSeconds:     300, // 5 minutes — Stytch JWT fixed lifetime
-		},
-	)
-	if err != nil {
-		return Identity{}, fmt.Errorf("invalid session JWT: %w", err)
-	}
-
-	identity := Identity{
-		UserID: resp.Session.UserID,
-	}
-
-	// Populate email from session user if available.
-	if resp.User != nil {
-		for _, e := range resp.User.Emails {
-			if e.Verified {
-				identity.Email = e.Email
-				break
-			}
-		}
-	}
-
-	return identity, nil
-}
-
-// ValidateSessionJWTRemote validates a session JWT against the Stytch API.
-// Use this as a fallback when local validation fails, or when a fresh
-// authoritative check is required.
-func (c *Client) ValidateSessionJWTRemote(ctx context.Context, sessionJWT string) (Identity, error) {
-	resp, err := c.api.Sessions.Authenticate(
-		ctx,
+		maxTokenAge,
 		&sessions.AuthenticateParams{
 			SessionJWT:             sessionJWT,
 			SessionDurationMinutes: SessionDurationMinutes,
 		},
 	)
 	if err != nil {
-		return Identity{}, fmt.Errorf("remote session validation failed: %w", err)
+		return Identity{}, fmt.Errorf("invalid or expired session: %w", err)
 	}
 
 	identity := Identity{
 		UserID: resp.Session.UserID,
 	}
 
-	if resp.User != nil {
+	// Populate email from user object if returned (only on remote validation).
+	if resp.User.UserID != "" {
 		for _, e := range resp.User.Emails {
 			if e.Verified {
 				identity.Email = e.Email

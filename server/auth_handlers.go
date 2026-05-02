@@ -130,15 +130,12 @@ func (am *AuthMiddleware) Wrap(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// Try local validation first — no network call needed.
+		// AuthenticateJWT tries local validation first and falls back to
+		// remote automatically — no separate fallback needed.
 		identity, err := am.Client.ValidateSessionJWT(req.Context(), sessionJWT)
 		if err != nil {
-			// Fall back to remote validation — JWT may need refreshing.
-			identity, err = am.Client.ValidateSessionJWTRemote(req.Context(), sessionJWT)
-			if err != nil {
-				http.Error(w, "invalid or expired session", http.StatusUnauthorized)
-				return
-			}
+			http.Error(w, "invalid or expired session", http.StatusUnauthorized)
+			return
 		}
 
 		// Set the verified user ID so the capability middleware can read it.
