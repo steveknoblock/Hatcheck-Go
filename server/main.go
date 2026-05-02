@@ -441,9 +441,16 @@ func issueHandler(w http.ResponseWriter, req *http.Request, key []byte, meta *me
 	}
 
 	// Validate perm is a known value.
+	// Admin capabilities can only be issued via the bootstrap token (no
+	// capability present in the request). Regular issuance is limited to
+	// read or write to prevent privilege escalation.
 	if perm != PermRead && perm != PermWrite {
-		http.Error(w, "perm must be read or write", http.StatusBadRequest)
-		return
+		if perm == PermAdmin && vr.Capability.ID == "" {
+			// Bootstrap path — admin issuance permitted.
+		} else {
+			http.Error(w, "perm must be read or write", http.StatusBadRequest)
+			return
+		}
 	}
 
 	expires, err := time.Parse(time.RFC3339, expiresStr)
