@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 
@@ -33,6 +34,7 @@ func loginHandler(w http.ResponseWriter, req *http.Request, authClient *auth.Cli
 	}
 
 	if err := authClient.SendMagicLink(req.Context(), body.Email); err != nil {
+		log.Printf("SendMagicLink error: %v", err)
 		http.Error(w, "failed to send magic link", http.StatusInternalServerError)
 		return
 	}
