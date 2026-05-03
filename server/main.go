@@ -46,7 +46,8 @@ func stashHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, me
 	}
 
 	// Verify the capability covers the hash that was just written.
-	if vr.Capability.Hash != hash {
+	// A wildcard hash "*" grants access to all objects.
+	if vr.Capability.Hash != "*" && vr.Capability.Hash != hash {
 		http.Error(w, "capability does not cover this object", http.StatusForbidden)
 		return
 	}
@@ -72,7 +73,8 @@ func fetchHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, vr
 	}
 
 	// Verify the capability covers the requested hash.
-	if vr.Capability.Hash != hash {
+	// A wildcard hash "*" grants access to all objects.
+	if vr.Capability.Hash != "*" && vr.Capability.Hash != hash {
 		http.Error(w, "capability does not cover this object", http.StatusForbidden)
 		return
 	}
@@ -198,7 +200,8 @@ func nameHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store,
 	}
 
 	// Verify the capability covers the named hash.
-	if vr.Capability.Hash != hash {
+	// A wildcard hash "*" grants access to all objects.
+	if vr.Capability.Hash != "*" && vr.Capability.Hash != hash {
 		http.Error(w, "capability does not cover this object", http.StatusForbidden)
 		return
 	}
