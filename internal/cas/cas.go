@@ -47,6 +47,12 @@ func (store *Store) Stash(content string) (string, error) {
 	// File name is remaining hex chars.
 	fileName := hash[shardLen:]
 
+	// Create shard directory if it doesn't exist.
+	shardPath := store.objPath + directorySeparator + shardName
+	if err := os.MkdirAll(shardPath, 0755); err != nil {
+		return "", err
+	}
+
 	// Create file.
 	filePath := store.objPath + directorySeparator + shardName + directorySeparator + fileName
 	f, e := os.Create(filePath)
