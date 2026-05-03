@@ -704,19 +704,98 @@
             word-break: break-all;
         }
 
-        .toast.show { opacity: 1; transform: translateY(0); }
-        .toast.error { border-left-color: var(--danger); }
-
-        .toast-label {
-            font-size: 10px;
-            color: var(--text-dim);
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            margin-bottom: 3px;
+        /* ── Login overlay ── */
+        .login-overlay {
+            position: fixed;
+            inset: 0;
+            background: var(--bg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
         }
+
+        .login-overlay.hidden { display: none; }
+
+        .login-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            padding: 40px 36px;
+            width: 340px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .login-title {
+            font-family: var(--sans);
+            font-size: 22px;
+            font-weight: 800;
+            color: var(--accent);
+            letter-spacing: -0.5px;
+        }
+
+        .login-sub {
+            font-size: 11px;
+            color: var(--text-dim);
+            line-height: 1.7;
+            margin-top: -10px;
+        }
+
+        .login-input {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: var(--mono);
+            font-size: 12px;
+            padding: 8px 10px;
+            outline: none;
+            width: 100%;
+            transition: border-color 0.15s;
+        }
+
+        .login-input:focus { border-color: var(--accent); }
+
+        .login-msg {
+            font-size: 11px;
+            color: var(--text-dim);
+            min-height: 16px;
+            text-align: center;
+        }
+
+        .login-msg.success { color: var(--accent); }
+        .login-msg.error   { color: var(--danger); }
+
+        .btn-logout {
+            padding: 4px 10px;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-dim);
+            font-family: var(--mono);
+            font-size: 10px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .btn-logout:hover { border-color: var(--danger); color: var(--danger); }
     </style>
 </head>
 <body>
+
+<!-- Login overlay — shown when no session JWT is present -->
+<div class="login-overlay" id="login-overlay">
+    <div class="login-box">
+        <div class="login-title">Hatcheck</div>
+        <div class="login-sub">Enter your email to receive a magic link.</div>
+        <input class="login-input" id="login-email" type="email"
+               placeholder="you@example.com"
+               onkeydown="if(event.key==='Enter') sendMagicLink()">
+        <button class="btn btn-primary" onclick="sendMagicLink()" id="login-btn">Send magic link</button>
+        <div class="login-msg" id="login-msg"></div>
+    </div>
+</div>
 
 <header>
     <h1>Hatcheck</h1>
@@ -728,6 +807,7 @@
             <div class="status-dot"></div>
             <span id="status-text">ready</span>
         </div>
+        <button class="btn-logout" id="logout-btn" onclick="logout()" style="display:none">Sign out</button>
     </div>
 </header>
 
@@ -862,6 +942,121 @@
 <script>
 const API = '';  // same origin
 
+// ── Auth state ──
+let sessionJWT      = sessionStorage.getItem('session_jwt') || '';
+let userID          = sessionStorage.getItem('user_id') || '';
+let capabilityToken = sessionStorage.getItem('capability_token') || '';
+
+// Show/hide login overlay based on auth state.
+function updateAuthUI() {
+    const loggedIn = !!sessionJWT;
+    document.getElementById('login-overlay').classList.toggle('hidden', loggedIn);
+    document.getElementById('logout-btn').style.display = loggedIn ? '' : 'none';
+}
+
+// apiFetch wraps fetch() to inject auth headers on every request.
+// On 401, clears auth state and shows the login screen.
+async function apiFetch(url, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (sessionJWT) {
+        headers['Authorization'] = `Bearer ${sessionJWT}`;
+        headers['X-User-ID'] = userID;
+    }
+    if (capabilityToken) {
+        headers['X-Capability-Token'] = capabilityToken;
+    }
+    const res = await fetch(url, { ...options, headers });
+    if (res.status === 401) {
+        // Session expired — clear auth and show login.
+        clearAuth();
+        showToast('Session expired', 'Please sign in again.', true);
+        throw new Error('Session expired');
+    }
+    return res;
+}
+
+function clearAuth() {
+    sessionJWT = '';
+    userID = '';
+    capabilityToken = '';
+    sessionStorage.removeItem('session_jwt');
+    sessionStorage.removeItem('user_id');
+    sessionStorage.removeItem('capability_token');
+    updateAuthUI();
+}
+
+function logout() {
+    clearAuth();
+    showToast('Signed out', 'See you next time.');
+}
+
+// Send magic link to email.
+async function sendMagicLink() {
+    const email = document.getElementById('login-email').value.trim();
+    const msg   = document.getElementById('login-msg');
+    const btn   = document.getElementById('login-btn');
+
+    if (!email) {
+        msg.textContent = 'Enter your email address.';
+        msg.className = 'login-msg error';
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+    msg.textContent = '';
+    msg.className = 'login-msg';
+
+    try {
+        const res = await apiFetch(`${API}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email }),
+        });
+        if (!res.ok) throw new Error('Failed to send magic link');
+        msg.textContent = 'Magic link sent — check your email.';
+        msg.className = 'login-msg success';
+    } catch(err) {
+        msg.textContent = err.message;
+        msg.className = 'login-msg error';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Send magic link';
+    }
+}
+
+// Handle magic link callback — token arrives as ?token= in the URL.
+async function handleMagicLinkCallback() {
+    const params = new URLSearchParams(window.location.search);
+    const token  = params.get('token');
+    if (!token) return;
+
+    // Clean the token from the URL without a page reload.
+    window.history.replaceState({}, '', window.location.pathname);
+
+    try {
+        const res = await apiFetch(`${API}/auth/authenticate?token=${encodeURIComponent(token)}`);
+        if (!res.ok) throw new Error('Authentication failed');
+        const data = await res.json();
+
+        sessionJWT = data.session_jwt;
+        userID     = data.user_id;
+
+        sessionStorage.setItem('session_jwt', sessionJWT);
+        sessionStorage.setItem('user_id', userID);
+
+        // Fetch capability token for this user if one is stored.
+        // For now, the admin issues this separately — stored in sessionStorage.
+        updateAuthUI();
+        showToast('Signed in', data.email || data.user_id);
+    } catch(err) {
+        showToast('Sign-in failed', err.message, true);
+    }
+}
+
+// On load: check for magic link token in URL, then update UI.
+handleMagicLinkCallback().then(updateAuthUI);
+
 // ── State ──
 let namespace  = '';
 let nameList   = []; // [{label, hash}]
@@ -916,7 +1111,7 @@ let nsSelectedIndex = -1;
 
 async function fetchNamespaces() {
     try {
-        const res = await fetch(`${API}/namespaces`);
+        const res = await apiFetch(`${API}/namespaces`);
         if (res.ok) allNamespaces = await res.json();
     } catch(e) {}
 }
@@ -975,7 +1170,7 @@ async function loadNamespace() {
     renderEditor(null, null);
 
     try {
-        const res = await fetch(`${API}/names?namespace=${encodeURIComponent(namespace)}`);
+        const res = await apiFetch(`${API}/names?namespace=${encodeURIComponent(namespace)}`);
         if (!res.ok) throw new Error('Failed to load namespace');
         nameList = await res.json();
         renderNameList();
@@ -1017,7 +1212,7 @@ async function descend(hash) {
     renderBreadcrumb();
 
     try {
-        const res = await fetch(`${API}/fetch?hash=${hash}`);
+        const res = await apiFetch(`${API}/fetch?hash=${hash}`);
         if (!res.ok) throw new Error('Object not found');
         const content = await res.text();
         const trimmed = content.trimEnd();
@@ -1161,7 +1356,7 @@ async function loadRelationsPanel(hash) {
     resetRelForm();
 
     try {
-        const res = await fetch(`${API}/relations?hash=${hash}`);
+        const res = await apiFetch(`${API}/relations?hash=${hash}`);
         if (!res.ok) throw new Error('Failed to load relations');
         const data = await res.json();
         renderRelList(data.outgoing || [], data.incoming || []);
@@ -1278,7 +1473,7 @@ function labelForHash(hash) {
 async function fetchTags() {
     if (allTags.length > 0) return; // cached
     try {
-        const res = await fetch(`${API}/tags`);
+        const res = await apiFetch(`${API}/tags`);
         if (res.ok) allTags = await res.json();
     } catch(e) {}
 }
@@ -1401,7 +1596,7 @@ async function selectRelTarget(label, hash) {
 
     // Fetch and show inline preview.
     try {
-        const res = await fetch(`${API}/fetch?hash=${hash}`);
+        const res = await apiFetch(`${API}/fetch?hash=${hash}`);
         if (!res.ok) throw new Error('fetch failed');
         const content = (await res.text()).trimEnd();
         showRelPreview(label, content);
@@ -1471,7 +1666,7 @@ async function createRelation() {
     btn.textContent = 'Creating…';
 
     try {
-        const res = await fetch(
+        const res = await apiFetch(
             `${API}/relation?from=${encodeURIComponent(currentHash)}&rel=${encodeURIComponent(rel)}&to=${encodeURIComponent(relToHash)}`,
             { method: 'POST' }
         );
@@ -1531,7 +1726,7 @@ async function saveContent() {
     saveBtn.textContent = 'Saving…';
 
     try {
-        const stashRes = await fetch(`${API}/stash`, { method: 'POST', body: content });
+        const stashRes = await apiFetch(`${API}/stash`, { method: 'POST', body: content });
         if (!stashRes.ok) throw new Error('Stash failed');
         let newHash = (await stashRes.text()).trim();
 
@@ -1545,7 +1740,7 @@ async function saveContent() {
             const updatedMembers = [...parentFrame.members];
             updatedMembers[childIndex] = newHash;
 
-            const colRes = await fetch(`${API}/collection`, {
+            const colRes = await apiFetch(`${API}/collection`, {
                 method: 'POST',
                 body: JSON.stringify(updatedMembers),
                 headers: { 'Content-Type': 'application/json' }
@@ -1557,7 +1752,7 @@ async function saveContent() {
         if (pathStack.length > 0) {
             const nameFrame = pathStack[0];
             const label     = nameFrame.label;
-            const nameRes   = await fetch(
+            const nameRes   = await apiFetch(
                 `${API}/name?namespace=${encodeURIComponent(namespace)}&label=${encodeURIComponent(label)}&hash=${newHash}`,
                 { method: 'POST' }
             );
@@ -1570,14 +1765,14 @@ async function saveContent() {
                 renderEditor(newHash, content);
                 return;
             }
-            const nameRes = await fetch(
+            const nameRes = await apiFetch(
                 `${API}/name?namespace=${encodeURIComponent(namespace)}&label=${encodeURIComponent(label)}&hash=${newHash}`,
                 { method: 'POST' }
             );
             if (!nameRes.ok) throw new Error('Name creation failed');
             currentLabel = label;
 
-            const listRes = await fetch(`${API}/names?namespace=${encodeURIComponent(namespace)}`);
+            const listRes = await apiFetch(`${API}/names?namespace=${encodeURIComponent(namespace)}`);
             nameList = await listRes.json();
         }
 
@@ -1586,7 +1781,7 @@ async function saveContent() {
         renderEditor(newHash, content);
         renderBreadcrumb();
 
-        const listRes = await fetch(`${API}/names?namespace=${encodeURIComponent(namespace)}`);
+        const listRes = await apiFetch(`${API}/names?namespace=${encodeURIComponent(namespace)}`);
         nameList = await listRes.json();
 
         showToast('Saved', newHash);
@@ -1653,7 +1848,7 @@ async function handleImportFile(input) {
     showToast('Importing', file.name);
 
     try {
-        const res = await fetch(`${API}/import`, {
+        const res = await apiFetch(`${API}/import`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/gzip' },
             body: file,
