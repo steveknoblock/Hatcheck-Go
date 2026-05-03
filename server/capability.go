@@ -91,7 +91,8 @@ func (cm *CapabilityMiddleware) Protect(
 		}
 
 		// Check the capability permits the required operation.
-		if cap.Perm != perm {
+		// Admin capabilities satisfy any permission check.
+		if cap.Perm != PermAdmin && cap.Perm != perm {
 			http.Error(w, "capability does not permit this operation", http.StatusForbidden)
 			return
 		}
