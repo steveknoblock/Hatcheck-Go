@@ -236,7 +236,7 @@ This is essentially what a database does internally when you add an index to a t
 
 ## Access Control
 
-Authorization is capability-based. Users are assigned capabilities. Objects are secured by capabilities.
+Hatcheck locates authorization at the object store. Authorization is capability-based. Users are assigned capabilities. Objects are secured by capabilities.
 
 A Capability has a unique identifier computed from id, hash, perm, principal string, expires time.Time
 
