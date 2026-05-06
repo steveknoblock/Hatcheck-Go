@@ -1025,33 +1025,24 @@ async function sendMagicLink() {
     }
 }
 
-// Handle magic link callback — token arrives as ?token= in the URL.
+// Handle magic link callback — server redirects here with session_jwt and user_id
+// as query parameters after authenticating the Stytch token.
 async function handleMagicLinkCallback() {
     const params = new URLSearchParams(window.location.search);
-    const token  = params.get('token');
-    if (!token) return;
+    const jwt   = params.get('session_jwt');
+    const uid   = params.get('user_id');
+    const email = params.get('email');
+    if (!jwt) return;
 
-    // Clean the token from the URL without a page reload.
+    // Clean the parameters from the URL without a page reload.
     window.history.replaceState({}, '', window.location.pathname);
 
-    try {
-        const res = await apiFetch(`${API}/auth/authenticate?token=${encodeURIComponent(token)}`);
-        if (!res.ok) throw new Error('Authentication failed');
-        const data = await res.json();
-
-        sessionJWT = data.session_jwt;
-        userID     = data.user_id;
-
-        sessionStorage.setItem('session_jwt', sessionJWT);
-        sessionStorage.setItem('user_id', userID);
-
-        // Fetch capability token for this user if one is stored.
-        // For now, the admin issues this separately — stored in sessionStorage.
-        updateAuthUI();
-        showToast('Signed in', data.email || data.user_id);
-    } catch(err) {
-        showToast('Sign-in failed', err.message, true);
-    }
+    sessionJWT = jwt;
+    userID     = uid;
+    sessionStorage.setItem('session_jwt', sessionJWT);
+    sessionStorage.setItem('user_id', userID);
+    updateAuthUI();
+    showToast('Signed in', email || uid);
 }
 
 // Load capability for a specific hash from sessionStorage.

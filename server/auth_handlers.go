@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/steveknoblock/hatcheck-go/internal/auth"
@@ -67,20 +68,17 @@ func authenticateHandler(w http.ResponseWriter, req *http.Request, authClient *a
 		return
 	}
 
-	// Return the session JWT and identity to the client as JSON.
-	// The client stores the JWT and presents it as a Bearer token on
-	// subsequent requests.
-	//w.Header().Set("Content-Type", "application/json")
-	//w.WriteHeader(http.StatusOK)
-	//json.NewEncoder(w).Encode(struct {
-	//	SessionJWT string `json:"session_jwt"`
-	//	UserID     string `json:"user_id"`
-	//	Email      string `json:"email,omitempty"`
-	//}{
-	//	SessionJWT: sessionJWT,
-	//	UserID:     identity.UserID,
-	//	Email:      identity.Email,
-	//})
+	// Redirect to the UI with the session JWT as query parameters.
+	// The UI's handleMagicLinkCallback reads these, stores them in
+	// sessionStorage, and cleans the URL.
+	redirectURL := fmt.Sprintf("/ui/?session_jwt=%s&user_id=%s",
+		url.QueryEscape(sessionJWT),
+		url.QueryEscape(identity.UserID),
+	)
+	if identity.Email != "" {
+		redirectURL += "&email=" + url.QueryEscape(identity.Email)
+	}
+	http.Redirect(w, req, redirectURL, http.StatusFound)
 }
 
 // logoutHandler instructs the client to discard its session JWT.
