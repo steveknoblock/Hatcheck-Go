@@ -24,6 +24,7 @@ type CapabilityMiddleware struct {
 type VerifiedRequest struct {
 	Capability metadata.CapabilityPayload
 	Principal  string
+	Email      string
 }
 
 // Protect wraps a handler with capability verification. The inner handler
@@ -59,6 +60,7 @@ func (cm *CapabilityMiddleware) Protect(
 				}
 				inner(w, req, VerifiedRequest{
 					Principal: principal,
+					Email:     req.Header.Get("X-User-Email"),
 				})
 				return
 			}
@@ -100,6 +102,7 @@ func (cm *CapabilityMiddleware) Protect(
 		inner(w, req, VerifiedRequest{
 			Capability: cap,
 			Principal:  principal,
+			Email:      req.Header.Get("X-User-Email"),
 		})
 	}
 }

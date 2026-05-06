@@ -153,3 +153,17 @@ func (am *AuthMiddleware) Wrap(next http.HandlerFunc) http.HandlerFunc {
 		next(w, req)
 	}
 }
+
+// WrapWithIdentity is like Wrap but passes a VerifiedRequest to the inner
+// handler directly, for routes that are auth-only with no capability check.
+func (am *AuthMiddleware) WrapWithIdentity(
+	inner func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest),
+) http.HandlerFunc {
+	return am.Wrap(func(w http.ResponseWriter, req *http.Request) {
+		vr := VerifiedRequest{
+			Principal: req.Header.Get("X-User-ID"),
+			Email:     req.Header.Get("X-User-Email"),
+		}
+		inner(w, req, vr)
+	})
+}
