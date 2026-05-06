@@ -1054,8 +1054,21 @@ async function handleMagicLinkCallback() {
     }
 }
 
-// On load: check for magic link token in URL, then update UI.
-handleMagicLinkCallback().then(updateAuthUI);
+// Load capability for a specific hash from sessionStorage.
+// Called when navigating to an existing object to set the active capability.
+function loadCapabilityForHash(hash) {
+    const caps = JSON.parse(sessionStorage.getItem('capabilities') || '{}');
+    if (caps[hash]) {
+        capabilityToken = JSON.stringify(caps[hash]);
+        sessionStorage.setItem('capability_token', capabilityToken);
+    } else {
+        // No local capability for this hash — clear active token.
+        // The request will fail with 403 if the user doesn't own it
+        // and hasn't been granted a capability by the owner.
+        capabilityToken = '';
+        sessionStorage.removeItem('capability_token');
+    }
+}
 
 // ── State ──
 let namespace  = '';
@@ -1210,6 +1223,7 @@ async function selectName(label, hash) {
 
 async function descend(hash) {
     renderBreadcrumb();
+    loadCapabilityForHash(hash);
 
     try {
         const res = await apiFetch(`${API}/fetch?hash=${hash}`);
@@ -1671,7 +1685,15 @@ async function createRelation() {
             { method: 'POST' }
         );
         if (!res.ok) throw new Error(await res.text());
-        const hash = (await res.text()).trim();
+        const relData = await res.json();
+        const hash = relData.hash;
+
+        // Store the capability issued for this relation object.
+        if (relData.capability) {
+            const caps = JSON.parse(sessionStorage.getItem('capabilities') || '{}');
+            caps[hash] = relData.capability;
+            sessionStorage.setItem('capabilities', JSON.stringify(caps));
+        }
 
         showToast('Relation created', hash);
         resetRelForm();
@@ -1728,7 +1750,19 @@ async function saveContent() {
     try {
         const stashRes = await apiFetch(`${API}/stash`, { method: 'POST', body: content });
         if (!stashRes.ok) throw new Error('Stash failed');
-        let newHash = (await stashRes.text()).trim();
+        const stashData = await stashRes.json();
+        let newHash = stashData.hash;
+
+        // Store the capability issued by the server for this object.
+        // This binds ownership to the current user.
+        if (stashData.capability) {
+            const caps = JSON.parse(sessionStorage.getItem('capabilities') || '{}');
+            caps[newHash] = stashData.capability;
+            sessionStorage.setItem('capabilities', JSON.stringify(caps));
+            // Update active capability token to the one just issued.
+            capabilityToken = JSON.stringify(stashData.capability);
+            sessionStorage.setItem('capability_token', capabilityToken);
+        }
 
         for (let i = pathStack.length - 2; i >= 1; i--) {
             const frame = pathStack[i];
@@ -1746,7 +1780,15 @@ async function saveContent() {
                 headers: { 'Content-Type': 'application/json' }
             });
             if (!colRes.ok) throw new Error('Collection stash failed');
-            newHash = (await colRes.text()).trim();
+            const colData = await colRes.json();
+            newHash = colData.hash;
+
+            // Store the capability issued for this collection object.
+            if (colData.capability) {
+                const caps = JSON.parse(sessionStorage.getItem('capabilities') || '{}');
+                caps[newHash] = colData.capability;
+                sessionStorage.setItem('capabilities', JSON.stringify(caps));
+            }
         }
 
         if (pathStack.length > 0) {

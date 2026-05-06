@@ -24,7 +24,47 @@ const (
 	PermAdmin = "admin"
 )
 
-func stashHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, vr VerifiedRequest) {
+// capabilityExpiry is the lifetime of capabilities issued on object creation.
+const capabilityExpiry = 365 * 24 * time.Hour
+
+// stashAndIssue stores content in the CAS, records it in the metadata log,
+// issues a bound write capability for the resulting hash tied to the
+// creating principal, and returns both the hash and the capability.
+// It is the single point of ownership establishment for all creation operations.
+func stashAndIssue(
+	store *cas.Store,
+	meta *metadata.Store,
+	key []byte,
+	content string,
+	principal string,
+	email string,
+	appendMeta func(hash string) error,
+) (string, metadata.CapabilityPayload, error) {
+	hash, err := store.Stash(content)
+	if err != nil {
+		return "", metadata.CapabilityPayload{}, fmt.Errorf("failed to stash content: %w", err)
+	}
+
+	if err := appendMeta(hash); err != nil {
+		log.Printf("warning: failed to append metadata for %s: %v", hash, err)
+	}
+
+	expires := time.Now().UTC().Add(capabilityExpiry)
+	cap := metadata.SignCapability(key, hash, PermWrite, principal, email, expires)
+	if err := meta.AppendCapability(cap); err != nil {
+		log.Printf("warning: failed to record capability for %s: %v", hash, err)
+	}
+
+	return hash, cap, nil
+}
+
+// stashResponse is the JSON shape returned by all creation endpoints.
+type stashResponse struct {
+	Hash       string                    `json:"hash"`
+	Capability metadata.CapabilityPayload `json:"capability"`
+}
+
+func stashHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, key []byte, vr VerifiedRequest) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -39,25 +79,20 @@ func stashHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, me
 
 	content := string(body)
 
-	hash, err := store.Stash(content)
+	hash, cap, err := stashAndIssue(store, meta, key, content, vr.Principal, vr.Email,
+		func(hash string) error {
+			return meta.AppendStash(hash, len(body), content)
+		},
+	)
 	if err != nil {
+		log.Printf("stash error: %v", err)
 		http.Error(w, "failed to stash content", http.StatusInternalServerError)
 		return
 	}
 
-	// Verify the capability covers the hash that was just written.
-	// A wildcard hash "*" grants access to all objects.
-	if vr.Capability.Hash != "*" && vr.Capability.Hash != hash {
-		http.Error(w, "capability does not cover this object", http.StatusForbidden)
-		return
-	}
-
-	if err := meta.AppendStash(hash, len(body), content); err != nil {
-		log.Printf("warning: failed to append metadata for %s: %v", hash, err)
-	}
-
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	fmt.Fprintf(w, "%s\n", hash)
+	json.NewEncoder(w).Encode(stashResponse{Hash: hash, Capability: cap})
 }
 
 func fetchHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, vr VerifiedRequest) {
@@ -225,9 +260,9 @@ func nameHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store,
 	fmt.Fprintf(w, "%s\n", fullLabel)
 }
 
-// collectionHandler stashes a Collection object and returns its hash.
+// collectionHandler stashes a Collection object and returns its hash and capability.
 // POST /collection — body is a JSON array of hashes
-func collectionHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, vr VerifiedRequest) {
+func collectionHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, key []byte, vr VerifiedRequest) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -247,18 +282,20 @@ func collectionHandler(w http.ResponseWriter, req *http.Request, store *cas.Stor
 	}
 
 	content := string(body)
-	hash, err := store.Stash(content)
+	hash, cap, err := stashAndIssue(store, meta, key, content, vr.Principal, vr.Email,
+		func(hash string) error {
+			return meta.AppendCollection(hash, hashes)
+		},
+	)
 	if err != nil {
+		log.Printf("collection error: %v", err)
 		http.Error(w, "failed to stash collection", http.StatusInternalServerError)
 		return
 	}
 
-	if err := meta.AppendCollection(hash, hashes); err != nil {
-		log.Printf("warning: failed to append collection metadata for %s: %v", hash, err)
-	}
-
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	fmt.Fprintf(w, "%s\n", hash)
+	json.NewEncoder(w).Encode(stashResponse{Hash: hash, Capability: cap})
 }
 
 // exportHandler streams a tar.gz archive to the client.
@@ -330,7 +367,7 @@ func importHandler(w http.ResponseWriter, req *http.Request, objPath, metaPath s
 
 // relationHandler stashes a Relation object and logs it to the metadata store.
 // POST /relation?from=<hash>&rel=<predicate>&to=<hash>
-func relationHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, vr VerifiedRequest) {
+func relationHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, key []byte, vr VerifiedRequest) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -356,18 +393,20 @@ func relationHandler(w http.ResponseWriter, req *http.Request, store *cas.Store,
 		return
 	}
 
-	hash, err := store.Stash(string(content))
+	hash, cap, err := stashAndIssue(store, meta, key, string(content), vr.Principal, vr.Email,
+		func(hash string) error {
+			return meta.AppendRelation(hash, from, rel, to)
+		},
+	)
 	if err != nil {
+		log.Printf("relation error: %v", err)
 		http.Error(w, "failed to stash relation", http.StatusInternalServerError)
 		return
 	}
 
-	if err := meta.AppendRelation(hash, from, rel, to); err != nil {
-		log.Printf("warning: failed to append relation metadata for %s: %v", hash, err)
-	}
-
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	fmt.Fprintf(w, "%s\n", hash)
+	json.NewEncoder(w).Encode(stashResponse{Hash: hash, Capability: cap})
 }
 
 // relationsHandler returns all outgoing and incoming relations for a given hash.
@@ -575,9 +614,12 @@ func main() {
 	})
 	http.HandleFunc("/auth/logout", logoutHandler)
 
-	http.HandleFunc("/stash", am.Wrap(cm.Protect(PermWrite, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		stashHandler(w, req, store, meta, vr)
-	})))
+	// Stash is auth-only — no capability required. The server issues a
+	// capability for the resulting hash automatically, making stash the
+	// ownership creation point.
+	http.HandleFunc("/stash", am.WrapWithIdentity(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+		stashHandler(w, req, store, meta, cm.Key, vr)
+	}))
 	http.HandleFunc("/fetch", am.Wrap(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		fetchHandler(w, req, store, vr)
 	})))
@@ -596,12 +638,12 @@ func main() {
 	http.HandleFunc("/name", am.Wrap(cm.Protect(PermWrite, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		nameHandler(w, req, meta, vr)
 	})))
-	http.HandleFunc("/collection", am.Wrap(cm.Protect(PermWrite, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		collectionHandler(w, req, store, meta, vr)
-	})))
-	http.HandleFunc("/relation", am.Wrap(cm.Protect(PermWrite, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		relationHandler(w, req, store, meta, vr)
-	})))
+	http.HandleFunc("/collection", am.WrapWithIdentity(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+		collectionHandler(w, req, store, meta, cm.Key, vr)
+	}))
+	http.HandleFunc("/relation", am.WrapWithIdentity(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+		relationHandler(w, req, store, meta, cm.Key, vr)
+	}))
 	http.HandleFunc("/relations", am.Wrap(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		relationsHandler(w, req, meta, vr)
 	})))
