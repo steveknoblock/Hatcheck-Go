@@ -1029,11 +1029,12 @@ async function sendMagicLink() {
 // as query parameters after authenticating the Stytch token.
 async function handleMagicLinkCallback() {
     const params = new URLSearchParams(window.location.search);
+    console.log('callback params:', window.location.search);  // add this
     const jwt   = params.get('session_jwt');
     const uid   = params.get('user_id');
     const email = params.get('email');
     if (!jwt) return;
-
+    
     // Clean the parameters from the URL without a page reload.
     window.history.replaceState({}, '', window.location.pathname);
 
@@ -1044,6 +1045,8 @@ async function handleMagicLinkCallback() {
     updateAuthUI();
     showToast('Signed in', email || uid);
 }
+// On load: check for magic link callback params, then update auth UI.
+handleMagicLinkCallback().then(updateAuthUI);
 
 // Load capability for a specific hash from sessionStorage.
 // Called when navigating to an existing object to set the active capability.
@@ -1733,6 +1736,10 @@ function newObject() {
 
 // ── Save (path copying) ──
 async function saveContent() {
+    if (!namespace) {
+        showToast('Error', 'Enter a namespace first', true);
+        return;
+    }
     const content = document.getElementById('editor').value;
     const saveBtn = document.getElementById('save-btn');
     saveBtn.disabled = true;

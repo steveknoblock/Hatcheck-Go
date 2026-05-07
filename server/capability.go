@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"encoding/json"
 	"net/http"
+	"log"
 
 	"github.com/steveknoblock/hatcheck-go/internal/metadata"
 )
@@ -94,11 +95,14 @@ func (cm *CapabilityMiddleware) Protect(
 
 		// Check the capability permits the required operation.
 		// Admin capabilities satisfy any permission check.
-		if cap.Perm != PermAdmin && cap.Perm != perm {
-			http.Error(w, "capability does not permit this operation", http.StatusForbidden)
-			return
-		}
-
+		log.Printf("debug: cap.Perm=%q perm=%q cap.ID=%q", cap.Perm, perm, cap.ID)
+// Admin satisfies any perm. Write satisfies read.
+if cap.Perm != PermAdmin && cap.Perm != perm {
+    if !(cap.Perm == PermWrite && perm == PermRead) {
+        http.Error(w, "capability does not permit this operation", http.StatusForbidden)
+        return
+    }
+}
 		inner(w, req, VerifiedRequest{
 			Capability: cap,
 			Principal:  principal,

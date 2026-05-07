@@ -62,12 +62,12 @@ func authenticateHandler(w http.ResponseWriter, req *http.Request, authClient *a
 		return
 	}
 
-	identity, sessionJWT, err := authClient.AuthenticateMagicLink(req.Context(), token)
-	if err != nil {
-		http.Error(w, "authentication failed", http.StatusUnauthorized)
-		return
-	}
-
+identity, sessionJWT, err := authClient.AuthenticateMagicLink(req.Context(), token)
+if err != nil {
+    log.Printf("AuthenticateMagicLink error: %v", err)
+    http.Error(w, "authentication failed", http.StatusUnauthorized)
+    return
+}
 	// Redirect to the UI with the session JWT as query parameters.
 	// The UI's handleMagicLinkCallback reads these, stores them in
 	// sessionStorage, and cleans the URL.

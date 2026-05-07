@@ -28,7 +28,7 @@ const SessionDurationMinutes = 60 * 24 // 24 hours
 
 // maxTokenAge is the maximum age of a JWT before local validation falls back
 // to a remote Stytch API call. Stytch JWTs have a fixed 5-minute lifetime.
-const maxTokenAge = 5 * time.Minute
+const maxTokenAge = 60 * time.Minute
 
 // Identity holds the verified identity of an authenticated user extracted
 // from a Stytch session JWT. It is passed into the capability middleware
