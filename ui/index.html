@@ -1733,10 +1733,6 @@ function resetRelForm() {
 
 // ── New object ──
 function newObject() {
-    if (!namespace) {
-        showToast('Error', 'Enter a namespace first', true);
-        return;
-    }
     if (editorDirty && !confirm('You have unsaved changes. Continue?')) return;
 
     pathStack    = [];
