@@ -946,6 +946,10 @@ const API = '';  // same origin
 let sessionJWT      = sessionStorage.getItem('session_jwt') || '';
 let userID          = sessionStorage.getItem('user_id') || '';
 let capabilityToken = sessionStorage.getItem('capability_token') || '';
+// browseCapToken is any valid capability the user holds, used for ambient read
+// calls (namespaces, names, tags, etc.) that don't target a specific object.
+// Populated from the first capability the server issues (e.g. on stash).
+let browseCapToken  = sessionStorage.getItem('browse_cap_token') || '';
 
 // Show/hide login overlay based on auth state.
 function updateAuthUI() {
@@ -962,8 +966,11 @@ async function apiFetch(url, options = {}) {
         headers['Authorization'] = `Bearer ${sessionJWT}`;
         headers['X-User-ID'] = userID;
     }
-    if (capabilityToken) {
-        headers['X-Capability-Token'] = capabilityToken;
+    // Use the active per-object capability if set; fall back to the browse
+    // capability for ambient metadata calls (namespaces, names, tags, etc.).
+    const activeCap = capabilityToken || browseCapToken;
+    if (activeCap) {
+        headers['X-Capability-Token'] = activeCap;
     }
     const res = await fetch(url, { ...options, headers });
     if (res.status === 401) {
@@ -979,9 +986,11 @@ function clearAuth() {
     sessionJWT = '';
     userID = '';
     capabilityToken = '';
+    browseCapToken = '';
     sessionStorage.removeItem('session_jwt');
     sessionStorage.removeItem('user_id');
     sessionStorage.removeItem('capability_token');
+    sessionStorage.removeItem('browse_cap_token');
     updateAuthUI();
 }
 
@@ -1046,7 +1055,11 @@ async function handleMagicLinkCallback() {
     showToast('Signed in', email || uid);
 }
 // On load: check for magic link callback params, then update auth UI.
-handleMagicLinkCallback().then(updateAuthUI);
+// Must be inside DOMContentLoaded — updateAuthUI touches the DOM and the
+// elements it references don't exist yet when the script first executes.
+document.addEventListener('DOMContentLoaded', () => {
+    handleMagicLinkCallback().then(updateAuthUI);
+});
 
 // Load capability for a specific hash from sessionStorage.
 // Called when navigating to an existing object to set the active capability.
@@ -1687,6 +1700,10 @@ async function createRelation() {
             const caps = JSON.parse(sessionStorage.getItem('capabilities') || '{}');
             caps[hash] = relData.capability;
             sessionStorage.setItem('capabilities', JSON.stringify(caps));
+            if (!browseCapToken) {
+                browseCapToken = JSON.stringify(relData.capability);
+                sessionStorage.setItem('browse_cap_token', browseCapToken);
+            }
         }
 
         showToast('Relation created', hash);
@@ -1760,13 +1777,14 @@ async function saveContent() {
             // Update active capability token to the one just issued.
             capabilityToken = JSON.stringify(stashData.capability);
             sessionStorage.setItem('capability_token', capabilityToken);
+            // Seed the browse capability if we don't have one yet.
+            // Any valid capability satisfies the PermRead check on metadata endpoints.
+            if (!browseCapToken) {
+                browseCapToken = capabilityToken;
+                sessionStorage.setItem('browse_cap_token', browseCapToken);
+            }
         }
-
         for (let i = pathStack.length - 2; i >= 1; i--) {
-            const frame = pathStack[i];
-            const members = [...frame.members];
-            members[pathStack[i + 1] ? pathStack.indexOf(pathStack[i + 1]) - i - 1 : frame.index] = newHash;
-
             const parentFrame    = pathStack[i];
             const childIndex     = pathStack[i].index;
             const updatedMembers = [...parentFrame.members];
@@ -1786,6 +1804,10 @@ async function saveContent() {
                 const caps = JSON.parse(sessionStorage.getItem('capabilities') || '{}');
                 caps[newHash] = colData.capability;
                 sessionStorage.setItem('capabilities', JSON.stringify(caps));
+                if (!browseCapToken) {
+                    browseCapToken = JSON.stringify(colData.capability);
+                    sessionStorage.setItem('browse_cap_token', browseCapToken);
+                }
             }
         }
 
