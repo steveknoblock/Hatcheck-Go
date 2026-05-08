@@ -974,10 +974,17 @@ async function apiFetch(url, options = {}) {
     }
     const res = await fetch(url, { ...options, headers });
     if (res.status === 401) {
-        // Session expired — clear auth and show login.
-        clearAuth();
-        showToast('Session expired', 'Please sign in again.', true);
-        throw new Error('Session expired');
+        // Only treat 401 as session expiry on auth endpoints.
+        // Data/capability endpoints should return 403 for missing capabilities,
+        // but guard here in case the server conflates the two.
+        if (url.includes('/auth/')) {
+            clearAuth();
+            showToast('Session expired', 'Please sign in again.', true);
+            throw new Error('Session expired');
+        }
+        // Non-auth 401 — likely a capability issue. Don't wipe the session.
+        showToast('Access denied', 'You may not have a capability for this object.', true);
+        throw new Error('Access denied');
     }
     return res;
 }
@@ -1130,6 +1137,7 @@ let allNamespaces = [];
 let nsSelectedIndex = -1;
 
 async function fetchNamespaces() {
+    if (!browseCapToken) return;   // no capability yet — skip rather than risk a 401
     try {
         const res = await apiFetch(`${API}/namespaces`);
         if (res.ok) allNamespaces = await res.json();
