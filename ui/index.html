@@ -1870,6 +1870,7 @@ async function saveContent() {
 
         const listRes = await apiFetch(`${API}/names?namespace=${encodeURIComponent(namespace)}`);
         nameList = await listRes.json();
+        renderNameList();
 
         showToast('Saved', newHash);
 
