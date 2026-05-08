@@ -1053,11 +1053,12 @@ async function sendMagicLink() {
 async function handleMagicLinkCallback() {
     const params = new URLSearchParams(window.location.search);
     console.log('callback params:', window.location.search);  // add this
-    const jwt   = params.get('session_jwt');
-    const uid   = params.get('user_id');
-    const email = params.get('email');
+    const jwt     = params.get('session_jwt');
+    const uid     = params.get('user_id');
+    const email   = params.get('email');
+    const readCap = params.get('read_cap');
     if (!jwt) return;
-    
+
     // Clean the parameters from the URL without a page reload.
     window.history.replaceState({}, '', window.location.pathname);
 
@@ -1065,6 +1066,14 @@ async function handleMagicLinkCallback() {
     userID     = uid;
     sessionStorage.setItem('session_jwt', sessionJWT);
     sessionStorage.setItem('user_id', userID);
+
+    // Store the wildcard read capability issued by the server at login.
+    // This allows fetching any object without a per-object capability.
+    if (readCap) {
+        browseCapToken = readCap;
+        sessionStorage.setItem('browse_cap_token', browseCapToken);
+    }
+
     updateAuthUI();
     showToast('Signed in', email || uid);
 }
@@ -1247,9 +1256,14 @@ async function descend(hash) {
     renderBreadcrumb();
     loadCapabilityForHash(hash);
 
+    // If we have no capability for this specific hash, try the browse token.
+    // The server will accept it only if it's a wildcard (*) capability.
+    // If neither covers the hash, the fetch will 403 — report that clearly.
     try {
         const res = await apiFetch(`${API}/fetch?hash=${hash}`);
-        if (!res.ok) throw new Error('Object not found');
+        if (res.status === 403) throw new Error('No capability for this object');
+        if (res.status === 404) throw new Error('Object not found');
+        if (!res.ok) throw new Error(`Fetch failed (${res.status})`);
         const content = await res.text();
         const trimmed = content.trimEnd();
 

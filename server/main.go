@@ -60,7 +60,7 @@ func stashAndIssue(
 
 // stashResponse is the JSON shape returned by all creation endpoints.
 type stashResponse struct {
-	Hash       string                    `json:"hash"`
+	Hash       string                     `json:"hash"`
 	Capability metadata.CapabilityPayload `json:"capability"`
 }
 
@@ -610,7 +610,7 @@ func main() {
 		loginHandler(w, req, authClient)
 	})
 	http.HandleFunc("/auth/authenticate", func(w http.ResponseWriter, req *http.Request) {
-		authenticateHandler(w, req, authClient)
+		authenticateHandler(w, req, authClient, meta, cm.Key)
 	})
 	http.HandleFunc("/auth/logout", logoutHandler)
 

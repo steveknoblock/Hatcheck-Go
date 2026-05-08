@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/steveknoblock/hatcheck-go/internal/auth"
+	"github.com/steveknoblock/hatcheck-go/internal/metadata"
 )
 
 // loginHandler accepts a POST with an email address and sends a magic link.
@@ -50,7 +52,12 @@ func loginHandler(w http.ResponseWriter, req *http.Request, authClient *auth.Cli
 // session JWT and returns it to the client.
 //
 // GET /auth/authenticate?token=<stytch_token>&stytch_token_type=magic_links
-func authenticateHandler(w http.ResponseWriter, req *http.Request, authClient *auth.Client) {
+// authenticateHandler handles the magic link callback from Stytch.
+// It exchanges the Stytch token for a session JWT, issues a wildcard read
+// capability for the authenticated user, and redirects to the UI with both.
+//
+// GET /auth/authenticate?token=<stytch_token>
+func authenticateHandler(w http.ResponseWriter, req *http.Request, authClient *auth.Client, meta *metadata.Store, key []byte) {
 	if req.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -68,15 +75,31 @@ if err != nil {
     http.Error(w, "authentication failed", http.StatusUnauthorized)
     return
 }
-	// Redirect to the UI with the session JWT as query parameters.
-	// The UI's handleMagicLinkCallback reads these, stores them in
-	// sessionStorage, and cleans the URL.
+	// Issue a wildcard read capability for this user. This allows them to
+	// read any object in the CAS without needing a per-object capability.
+	// Write and admin operations still require a specific capability.
+	expires := time.Now().UTC().Add(capabilityExpiry)
+	readCap := metadata.SignCapability(key, "*", PermRead, identity.UserID, identity.Email, expires)
+	if err := meta.AppendCapability(readCap); err != nil {
+		log.Printf("warning: failed to record read capability for %s: %v", identity.UserID, err)
+	}
+	readCapJSON, err := json.Marshal(readCap)
+	if err != nil {
+		log.Printf("warning: failed to marshal read capability for %s: %v", identity.UserID, err)
+	}
+
+	// Redirect to the UI with the session JWT, user identity, and read
+	// capability as query parameters. handleMagicLinkCallback reads these,
+	// stores them in sessionStorage, and cleans the URL.
 	redirectURL := fmt.Sprintf("/ui/?session_jwt=%s&user_id=%s",
 		url.QueryEscape(sessionJWT),
 		url.QueryEscape(identity.UserID),
 	)
 	if identity.Email != "" {
 		redirectURL += "&email=" + url.QueryEscape(identity.Email)
+	}
+	if readCapJSON != nil {
+		redirectURL += "&read_cap=" + url.QueryEscape(string(readCapJSON))
 	}
 	http.Redirect(w, req, redirectURL, http.StatusFound)
 }
