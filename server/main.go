@@ -604,6 +604,8 @@ func main() {
 
 	am := &AuthMiddleware{Client: authClient}
 
+	rl := NewRateLimiters()
+
 	// Auth routes — not capability protected, but also not JWT protected
 	// since these are the routes that establish identity in the first place.
 	http.HandleFunc("/auth/login", func(w http.ResponseWriter, req *http.Request) {
@@ -617,53 +619,53 @@ func main() {
 	// Stash is auth-only — no capability required. The server issues a
 	// capability for the resulting hash automatically, making stash the
 	// ownership creation point.
-	http.HandleFunc("/stash", am.WrapWithIdentity(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	http.HandleFunc("/stash", rl.Write.Limit(am.WrapWithIdentity(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		stashHandler(w, req, store, meta, cm.Key, vr)
-	}))
-	http.HandleFunc("/fetch", am.Wrap(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	})))
+	http.HandleFunc("/fetch", am.Wrap(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		fetchHandler(w, req, store, vr)
-	})))
-	http.HandleFunc("/list", am.Wrap(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	}))))
+	http.HandleFunc("/list", am.Wrap(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		listHandler(w, req, store, meta, vr)
-	})))
-	http.HandleFunc("/query", am.Wrap(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	}))))
+	http.HandleFunc("/query", am.Wrap(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		queryHandler(w, req, meta, vr)
-	})))
-	http.HandleFunc("/namespaces", am.Wrap(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	}))))
+	http.HandleFunc("/namespaces", am.Wrap(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		namespacesHandler(w, req, meta, vr)
-	})))
-	http.HandleFunc("/names", am.Wrap(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	}))))
+	http.HandleFunc("/names", am.Wrap(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		namesHandler(w, req, meta, vr)
-	})))
-	http.HandleFunc("/name", am.Wrap(cm.Protect(PermWrite, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	}))))
+	http.HandleFunc("/name", am.Wrap(rl.Write.Limit(cm.Protect(PermWrite, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		nameHandler(w, req, meta, vr)
-	})))
-	http.HandleFunc("/collection", am.WrapWithIdentity(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	}))))
+	http.HandleFunc("/collection", rl.Write.Limit(am.WrapWithIdentity(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		collectionHandler(w, req, store, meta, cm.Key, vr)
-	}))
-	http.HandleFunc("/relation", am.WrapWithIdentity(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	})))
+	http.HandleFunc("/relation", rl.Write.Limit(am.WrapWithIdentity(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		relationHandler(w, req, store, meta, cm.Key, vr)
-	}))
-	http.HandleFunc("/relations", am.Wrap(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	})))
+	http.HandleFunc("/relations", am.Wrap(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		relationsHandler(w, req, meta, vr)
-	})))
-	http.HandleFunc("/tags", am.Wrap(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	}))))
+	http.HandleFunc("/tags", am.Wrap(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		tagsHandler(w, req, meta, vr)
-	})))
-	http.HandleFunc("/export", am.Wrap(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	}))))
+	http.HandleFunc("/export", am.Wrap(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		exportHandler(w, req, objPath, metaPath, vr)
-	})))
-	http.HandleFunc("/import", am.Wrap(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	}))))
+	http.HandleFunc("/import", am.Wrap(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		importHandler(w, req, objPath, metaPath, vr)
-	})))
+	}))))
 	// POST /capability issues a new capability. Other methods return 405.
 	// GET /capability (capability lookup by ID) is not currently implemented.
-	http.HandleFunc("/capability", am.Wrap(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	http.HandleFunc("/capability", am.Wrap(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		issueHandler(w, req, cm.Key, meta, vr)
-	})))
-	http.HandleFunc("/capability/revoke", am.Wrap(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	}))))
+	http.HandleFunc("/capability/revoke", am.Wrap(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		revokeHandler(w, req, meta, cm.Revoked, vr)
-	})))
+	}))))
 
 	http.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.Dir(uiPath))))
 
