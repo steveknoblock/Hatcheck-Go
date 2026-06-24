@@ -175,9 +175,9 @@ func (am *AuthMiddleware) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// WrapWithIdentity is like RequireAuth but passes a VerifiedRequest to the inner
+// RequireAuthWithIdentity is like RequireAuth but passes a VerifiedRequest to the inner
 // handler directly, for routes that are auth-only with no capability check.
-func (am *AuthMiddleware) WrapWithIdentity(
+func (am *AuthMiddleware) RequireAuthWithIdentity(
 	inner func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest),
 ) http.HandlerFunc {
 	return am.RequireAuth(func(w http.ResponseWriter, req *http.Request) {
