@@ -69,12 +69,12 @@ func authenticateHandler(w http.ResponseWriter, req *http.Request, authClient *a
 		return
 	}
 
-identity, sessionJWT, err := authClient.AuthenticateMagicLink(req.Context(), token)
-if err != nil {
-    log.Printf("AuthenticateMagicLink error: %v", err)
-    http.Error(w, "authentication failed", http.StatusUnauthorized)
-    return
-}
+	identity, sessionJWT, err := authClient.AuthenticateMagicLink(req.Context(), token)
+	if err != nil {
+		log.Printf("AuthenticateMagicLink error: %v", err)
+		http.Error(w, "authentication failed", http.StatusUnauthorized)
+		return
+	}
 	// Issue a wildcard read capability for this user. This allows them to
 	// read any object in the CAS without needing a per-object capability.
 	// Write and admin operations still require a specific capability.
@@ -132,9 +132,9 @@ type AuthMiddleware struct {
 	Client *auth.Client
 }
 
-// Wrap adds JWT validation in front of a handler that expects X-User-ID to
+// RequireAuth adds JWT validation in front of a handler that expects X-User-ID to
 // be set. It is designed to sit before CapabilityMiddleware in the chain.
-func (am *AuthMiddleware) Wrap(next http.HandlerFunc) http.HandlerFunc {
+func (am *AuthMiddleware) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		authHeader := req.Header.Get("Authorization")
 		if authHeader == "" {
@@ -175,12 +175,12 @@ func (am *AuthMiddleware) Wrap(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// WrapWithIdentity is like Wrap but passes a VerifiedRequest to the inner
+// WrapWithIdentity is like RequireAuth but passes a VerifiedRequest to the inner
 // handler directly, for routes that are auth-only with no capability check.
 func (am *AuthMiddleware) WrapWithIdentity(
 	inner func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest),
 ) http.HandlerFunc {
-	return am.Wrap(func(w http.ResponseWriter, req *http.Request) {
+	return am.RequireAuth(func(w http.ResponseWriter, req *http.Request) {
 		vr := VerifiedRequest{
 			Principal: req.Header.Get("X-User-ID"),
 			Email:     req.Header.Get("X-User-Email"),
