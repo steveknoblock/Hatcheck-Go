@@ -619,7 +619,7 @@ func main() {
 	// Stash is auth-only — no capability required. The server issues a
 	// capability for the resulting hash automatically, making stash the
 	// ownership creation point.
-	http.HandleFunc("/stash", rl.Write.Limit(am.RequireAuthWithIdentity(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	http.HandleFunc("/stash", am.RequireAuthWithIdentity(rl.Write.LimitFunc(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		stashHandler(w, req, store, meta, cm.Key, vr)
 	})))
 	http.HandleFunc("/fetch", am.RequireAuth(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
@@ -640,10 +640,10 @@ func main() {
 	http.HandleFunc("/name", am.RequireAuth(rl.Write.Limit(cm.Protect(PermWrite, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		nameHandler(w, req, meta, vr)
 	}))))
-	http.HandleFunc("/collection", rl.Write.Limit(am.RequireAuthWithIdentity(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	http.HandleFunc("/collection", am.RequireAuthWithIdentity(rl.Write.LimitFunc(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		collectionHandler(w, req, store, meta, cm.Key, vr)
 	})))
-	http.HandleFunc("/relation", rl.Write.Limit(am.RequireAuthWithIdentity(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	http.HandleFunc("/relation", am.RequireAuthWithIdentity(rl.Write.LimitFunc(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		relationHandler(w, req, store, meta, cm.Key, vr)
 	})))
 	http.HandleFunc("/relations", am.RequireAuth(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {

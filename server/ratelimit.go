@@ -82,6 +82,38 @@ func (rl *RateLimitMiddleware) Limit(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// LimitFunc wraps a func(w, req, vr VerifiedRequest) with rate limiting keyed
+// on the authenticated user ID. Use this for routes that go through
+// RequireAuthWithIdentity instead of RequireAuth, since those routes use a
+// different inner function signature.
+func (rl *RateLimitMiddleware) LimitFunc(next func(http.ResponseWriter, *http.Request, VerifiedRequest)) func(http.ResponseWriter, *http.Request, VerifiedRequest) {
+	return func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+		userID := req.Header.Get("X-User-ID")
+		if userID == "" {
+			http.Error(w, "missing user identity", http.StatusUnauthorized)
+			return
+		}
+
+		limiter := rl.limiterFor(userID)
+		reservation := limiter.Reserve()
+
+		// Always set the limit and remaining headers.
+		w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", rl.burst))
+		remaining := int(math.Max(0, limiter.Tokens()))
+		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
+
+		if !reservation.OK() || reservation.Delay() > 0 {
+			reservation.Cancel()
+			retryAfter := int(math.Ceil(reservation.Delay().Seconds()))
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfter))
+			http.Error(w, "too many requests", http.StatusTooManyRequests)
+			return
+		}
+
+		next(w, req, vr)
+	}
+}
+
 // RateLimiters holds three pools matching the cost profile of the API routes.
 type RateLimiters struct {
 	Read  *RateLimitMiddleware // /fetch, /list, /query, /namespaces, /names, /relations, /tags
