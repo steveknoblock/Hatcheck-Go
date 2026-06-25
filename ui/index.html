@@ -5,28 +5,29 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hatcheck</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+    <link href="http://fonts.googleapis.com/css?family=Lato|Lora|Inconsolata" rel="stylesheet">
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
         :root {
-            --bg:          #0e0e0e;
-            --surface:     #161616;
-            --surface2:    #1e1e1e;
-            --border:      #2a2a2a;
-            --accent:      #c8f04b;
-            --accent-dim:  #8aab2a;
-            --text:        #e8e8e8;
-            --text-dim:    #666;
-            --text-muted:  #3a3a3a;
-            --danger:      #ff4d4d;
-            --collection:  #4bb8f0;
-            --relation:    #f0a84b;
-            --mono:        'JetBrains Mono', monospace;
-            --sans:        'Syne', sans-serif;
+            --bg:          #eeeeee;
+            --surface:     #e4e4e4;
+            --surface2:    #d8d8d8;
+            --border:      #cccccc;
+            --accent:      #3377aa;
+            --accent-dim:  #255580;
+            --text:        #000000;
+            --text-dim:    #666666;
+            --text-muted:  #999999;
+            --danger:      #cc3333;
+            --collection:  #2277bb;
+            --relation:    #996622;
+            --mono:        'Inconsolata', monospace;
+            --sans:        'Lato', sans-serif;
+            --serif:       'Lora', serif;
         }
 
-        html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--mono); overflow: hidden; }
+        html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--sans); overflow: hidden; }
 
         /* ── Header ── */
         header {
@@ -41,10 +42,10 @@
         }
 
         header h1 {
-            font-family: var(--sans);
-            font-weight: 800;
-            font-size: 18px;
-            letter-spacing: -0.5px;
+            font-family: var(--serif);
+            font-weight: 700;
+            font-size: 20px;
+            letter-spacing: 0px;
             color: var(--accent);
             flex-shrink: 0;
         }
@@ -72,7 +73,7 @@
             background: var(--bg);
             border: 1px solid var(--border);
             color: var(--text);
-            font-family: var(--mono);
+            font-family: var(--sans);
             font-size: 11px;
             padding: 4px 7px;
             outline: none;
@@ -107,7 +108,7 @@
         }
 
         .ns-option:hover, .ns-option.selected {
-            background: rgba(200,240,75,0.08);
+            background: rgba(51,119,170,0.10);
             color: var(--accent);
         }
 
@@ -115,17 +116,17 @@
             padding: 4px 10px;
             background: var(--accent);
             border: none;
-            color: #0e0e0e;
-            font-family: var(--mono);
+            color: #ffffff;
+            font-family: var(--sans);
             font-size: 10px;
-            font-weight: 500;
+            font-weight: 700;
             letter-spacing: 0.08em;
             text-transform: uppercase;
             cursor: pointer;
             transition: background 0.15s;
         }
 
-        .ns-go:hover { background: #d4f55a; }
+        .ns-go:hover { background: var(--accent-dim); }
 
         .header-right {
             margin-left: auto;
@@ -214,12 +215,12 @@
         }
 
         .tree-item:hover {
-            background: rgba(200,240,75,0.04);
+            background: rgba(51,119,170,0.06);
             border-left-color: var(--text-muted);
         }
 
         .tree-item.active {
-            background: rgba(200,240,75,0.07);
+            background: rgba(51,119,170,0.10);
             border-left-color: var(--accent);
             color: var(--accent);
         }
@@ -227,8 +228,8 @@
         .tree-item.new { animation: flash 1.2s ease forwards; }
 
         @keyframes flash {
-            0%   { background: rgba(200,240,75,0.18); }
-            100% { background: rgba(200,240,75,0.07); }
+            0%   { background: rgba(51,119,170,0.18); }
+            100% { background: rgba(51,119,170,0.10); }
         }
 
         .tree-icon {
@@ -368,9 +369,9 @@
 
         .tab-btn {
             padding: 8px 16px;
-            font-family: var(--mono);
+            font-family: var(--sans);
             font-size: 10px;
-            font-weight: 500;
+            font-weight: 700;
             letter-spacing: 0.12em;
             text-transform: uppercase;
             color: var(--text-dim);
@@ -421,18 +422,18 @@
         .btn {
             padding: 5px 14px;
             border: none;
-            font-family: var(--mono);
-            font-size: 10px;
-            font-weight: 500;
-            letter-spacing: 0.08em;
+            font-family: var(--sans);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
             text-transform: uppercase;
             cursor: pointer;
             transition: all 0.15s;
             flex-shrink: 0;
         }
 
-        .btn-primary { background: var(--accent); color: #0e0e0e; }
-        .btn-primary:hover { background: #d4f55a; }
+        .btn-primary { background: var(--accent); color: #ffffff; }
+        .btn-primary:hover { background: var(--accent-dim); }
         .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
 
         .btn-ghost {
@@ -479,11 +480,11 @@
             width: 100%; height: 100%;
             background: var(--bg);
             color: var(--text);
-            font-family: var(--mono);
-            font-size: 13px;
-            line-height: 1.75;
+            font-family: var(--serif);
+            font-size: 15px;
+            line-height: 1.85;
             border: none; outline: none; resize: none;
-            padding: 20px 24px;
+            padding: 28px 32px;
             letter-spacing: 0.01em;
         }
 
@@ -554,7 +555,7 @@
             background: var(--bg);
             border: 1px solid var(--border);
             color: var(--text);
-            font-family: var(--mono);
+            font-family: var(--sans);
             font-size: 11px;
             padding: 4px 7px;
             outline: none;
@@ -703,20 +704,107 @@
             max-width: 320px;
             word-break: break-all;
         }
-
-        .toast.show { opacity: 1; transform: translateY(0); }
-        .toast.error { border-left-color: var(--danger); }
-
-        .toast-label {
-            font-size: 10px;
-            color: var(--text-dim);
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            margin-bottom: 3px;
+        .toast.show {
+            opacity: 1;
+            transform: translateY(0);
         }
+        .toast.error {
+            border-left-color: var(--danger);
+        }
+
+        /* ── Login overlay ── */
+        .login-overlay {
+            position: fixed;
+            inset: 0;
+            background: var(--bg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .login-overlay.hidden { display: none; }
+
+        .login-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            padding: 40px 36px;
+            width: 340px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .login-title {
+            font-family: var(--sans);
+            font-size: 22px;
+            font-weight: 800;
+            color: var(--accent);
+            letter-spacing: -0.5px;
+        }
+
+        .login-sub {
+            font-size: 11px;
+            color: var(--text-dim);
+            line-height: 1.7;
+            margin-top: -10px;
+        }
+
+        .login-input {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: var(--sans);
+            font-size: 13px;
+            padding: 8px 10px;
+            outline: none;
+            width: 100%;
+            transition: border-color 0.15s;
+        }
+
+        .login-input:focus { border-color: var(--accent); }
+
+        .login-msg {
+            font-size: 12px;
+            color: var(--text-dim);
+            min-height: 16px;
+            text-align: center;
+        }
+
+        .login-msg.success { color: var(--accent); }
+        .login-msg.error   { color: var(--danger); }
+
+        .btn-logout {
+            padding: 4px 10px;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-dim);
+            font-family: var(--sans);
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .btn-logout:hover { border-color: var(--danger); color: var(--danger); }
     </style>
 </head>
 <body>
+
+<!-- Login overlay — shown when no session JWT is present -->
+<div class="login-overlay" id="login-overlay">
+    <div class="login-box">
+        <div class="login-title">Hatcheck</div>
+        <div class="login-sub">Enter your email to receive a magic link.</div>
+        <input class="login-input" id="login-email" type="email"
+               placeholder="you@example.com"
+               onkeydown="if(event.key==='Enter') sendMagicLink()">
+        <button class="btn btn-primary" onclick="sendMagicLink()" id="login-btn">Send magic link</button>
+        <div class="login-msg" id="login-msg"></div>
+    </div>
+</div>
 
 <header>
     <h1>Hatcheck</h1>
@@ -728,6 +816,7 @@
             <div class="status-dot"></div>
             <span id="status-text">ready</span>
         </div>
+        <button class="btn-logout" id="logout-btn" onclick="logout()" style="display:none">Sign out</button>
     </div>
 </header>
 
@@ -862,6 +951,157 @@
 <script>
 const API = '';  // same origin
 
+// ── Auth state ──
+let sessionJWT      = sessionStorage.getItem('session_jwt') || '';
+let userID          = sessionStorage.getItem('user_id') || '';
+let capabilityToken = sessionStorage.getItem('capability_token') || '';
+// browseCapToken is any valid capability the user holds, used for ambient read
+// calls (namespaces, names, tags, etc.) that don't target a specific object.
+// Populated from the first capability the server issues (e.g. on stash).
+let browseCapToken  = sessionStorage.getItem('browse_cap_token') || '';
+
+// Show/hide login overlay based on auth state.
+function updateAuthUI() {
+    const loggedIn = !!sessionJWT;
+    document.getElementById('login-overlay').classList.toggle('hidden', loggedIn);
+    document.getElementById('logout-btn').style.display = loggedIn ? '' : 'none';
+}
+
+// apiFetch wraps fetch() to inject auth headers on every request.
+// On 401, clears auth state and shows the login screen.
+async function apiFetch(url, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (sessionJWT) {
+        headers['Authorization'] = `Bearer ${sessionJWT}`;
+        headers['X-User-ID'] = userID;
+    }
+    // Use the active per-object capability if set; fall back to the browse
+    // capability for ambient metadata calls (namespaces, names, tags, etc.).
+    const activeCap = capabilityToken || browseCapToken;
+    if (activeCap) {
+        headers['X-Capability-Token'] = activeCap;
+    }
+    const res = await fetch(url, { ...options, headers });
+    if (res.status === 401) {
+        // Only treat 401 as session expiry on auth endpoints.
+        // Data/capability endpoints should return 403 for missing capabilities,
+        // but guard here in case the server conflates the two.
+        if (url.includes('/auth/')) {
+            clearAuth();
+            showToast('Session expired', 'Please sign in again.', true);
+            throw new Error('Session expired');
+        }
+        // Non-auth 401 — likely a capability issue. Don't wipe the session.
+        showToast('Access denied', 'You may not have a capability for this object.', true);
+        throw new Error('Access denied');
+    }
+    return res;
+}
+
+function clearAuth() {
+    sessionJWT = '';
+    userID = '';
+    capabilityToken = '';
+    browseCapToken = '';
+    sessionStorage.removeItem('session_jwt');
+    sessionStorage.removeItem('user_id');
+    sessionStorage.removeItem('capability_token');
+    sessionStorage.removeItem('browse_cap_token');
+    updateAuthUI();
+}
+
+function logout() {
+    clearAuth();
+    showToast('Signed out', 'See you next time.');
+}
+
+// Send magic link to email.
+async function sendMagicLink() {
+    const email = document.getElementById('login-email').value.trim();
+    const msg   = document.getElementById('login-msg');
+    const btn   = document.getElementById('login-btn');
+
+    if (!email) {
+        msg.textContent = 'Enter your email address.';
+        msg.className = 'login-msg error';
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+    msg.textContent = '';
+    msg.className = 'login-msg';
+
+    try {
+        const res = await apiFetch(`${API}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email }),
+        });
+        if (!res.ok) throw new Error('Failed to send magic link');
+        msg.textContent = 'Magic link sent — check your email.';
+        msg.className = 'login-msg success';
+    } catch(err) {
+        msg.textContent = err.message;
+        msg.className = 'login-msg error';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Send magic link';
+    }
+}
+
+// Handle magic link callback — server redirects here with session_jwt and user_id
+// as query parameters after authenticating the Stytch token.
+async function handleMagicLinkCallback() {
+    const params = new URLSearchParams(window.location.search);
+    console.log('callback params:', window.location.search);  // add this
+    const jwt     = params.get('session_jwt');
+    const uid     = params.get('user_id');
+    const email   = params.get('email');
+    const readCap = params.get('read_cap');
+    if (!jwt) return;
+
+    // Clean the parameters from the URL without a page reload.
+    window.history.replaceState({}, '', window.location.pathname);
+
+    sessionJWT = jwt;
+    userID     = uid;
+    sessionStorage.setItem('session_jwt', sessionJWT);
+    sessionStorage.setItem('user_id', userID);
+
+    // Store the wildcard read capability issued by the server at login.
+    // This allows fetching any object without a per-object capability.
+    if (readCap) {
+        browseCapToken = readCap;
+        sessionStorage.setItem('browse_cap_token', browseCapToken);
+    }
+
+    updateAuthUI();
+    showToast('Signed in', email || uid);
+}
+// On load: check for magic link callback params, then update auth UI.
+// Must be inside DOMContentLoaded — updateAuthUI touches the DOM and the
+// elements it references don't exist yet when the script first executes.
+document.addEventListener('DOMContentLoaded', () => {
+    handleMagicLinkCallback().then(updateAuthUI);
+});
+
+// Load capability for a specific hash from sessionStorage.
+// Called when navigating to an existing object to set the active capability.
+function loadCapabilityForHash(hash) {
+    const caps = JSON.parse(sessionStorage.getItem('capabilities') || '{}');
+    if (caps[hash]) {
+        capabilityToken = JSON.stringify(caps[hash]);
+        sessionStorage.setItem('capability_token', capabilityToken);
+    } else {
+        // No local capability for this hash — clear active token.
+        // The request will fail with 403 if the user doesn't own it
+        // and hasn't been granted a capability by the owner.
+        capabilityToken = '';
+        sessionStorage.removeItem('capability_token');
+    }
+}
+
 // ── State ──
 let namespace  = '';
 let nameList   = []; // [{label, hash}]
@@ -915,8 +1155,9 @@ let allNamespaces = [];
 let nsSelectedIndex = -1;
 
 async function fetchNamespaces() {
+    if (!browseCapToken) return;   // no capability yet — skip rather than risk a 401
     try {
-        const res = await fetch(`${API}/namespaces`);
+        const res = await apiFetch(`${API}/namespaces`);
         if (res.ok) allNamespaces = await res.json();
     } catch(e) {}
 }
@@ -975,7 +1216,7 @@ async function loadNamespace() {
     renderEditor(null, null);
 
     try {
-        const res = await fetch(`${API}/names?namespace=${encodeURIComponent(namespace)}`);
+        const res = await apiFetch(`${API}/names?namespace=${encodeURIComponent(namespace)}`);
         if (!res.ok) throw new Error('Failed to load namespace');
         nameList = await res.json();
         renderNameList();
@@ -1015,10 +1256,16 @@ async function selectName(label, hash) {
 
 async function descend(hash) {
     renderBreadcrumb();
+    loadCapabilityForHash(hash);
 
+    // If we have no capability for this specific hash, try the browse token.
+    // The server will accept it only if it's a wildcard (*) capability.
+    // If neither covers the hash, the fetch will 403 — report that clearly.
     try {
-        const res = await fetch(`${API}/fetch?hash=${hash}`);
-        if (!res.ok) throw new Error('Object not found');
+        const res = await apiFetch(`${API}/fetch?hash=${hash}`);
+        if (res.status === 403) throw new Error('No capability for this object');
+        if (res.status === 404) throw new Error('Object not found');
+        if (!res.ok) throw new Error(`Fetch failed (${res.status})`);
         const content = await res.text();
         const trimmed = content.trimEnd();
 
@@ -1161,7 +1408,7 @@ async function loadRelationsPanel(hash) {
     resetRelForm();
 
     try {
-        const res = await fetch(`${API}/relations?hash=${hash}`);
+        const res = await apiFetch(`${API}/relations?hash=${hash}`);
         if (!res.ok) throw new Error('Failed to load relations');
         const data = await res.json();
         renderRelList(data.outgoing || [], data.incoming || []);
@@ -1278,7 +1525,7 @@ function labelForHash(hash) {
 async function fetchTags() {
     if (allTags.length > 0) return; // cached
     try {
-        const res = await fetch(`${API}/tags`);
+        const res = await apiFetch(`${API}/tags`);
         if (res.ok) allTags = await res.json();
     } catch(e) {}
 }
@@ -1401,7 +1648,7 @@ async function selectRelTarget(label, hash) {
 
     // Fetch and show inline preview.
     try {
-        const res = await fetch(`${API}/fetch?hash=${hash}`);
+        const res = await apiFetch(`${API}/fetch?hash=${hash}`);
         if (!res.ok) throw new Error('fetch failed');
         const content = (await res.text()).trimEnd();
         showRelPreview(label, content);
@@ -1471,12 +1718,24 @@ async function createRelation() {
     btn.textContent = 'Creating…';
 
     try {
-        const res = await fetch(
+        const res = await apiFetch(
             `${API}/relation?from=${encodeURIComponent(currentHash)}&rel=${encodeURIComponent(rel)}&to=${encodeURIComponent(relToHash)}`,
             { method: 'POST' }
         );
         if (!res.ok) throw new Error(await res.text());
-        const hash = (await res.text()).trim();
+        const relData = await res.json();
+        const hash = relData.hash;
+
+        // Store the capability issued for this relation object.
+        if (relData.capability) {
+            const caps = JSON.parse(sessionStorage.getItem('capabilities') || '{}');
+            caps[hash] = relData.capability;
+            sessionStorage.setItem('capabilities', JSON.stringify(caps));
+            if (!browseCapToken) {
+                browseCapToken = JSON.stringify(relData.capability);
+                sessionStorage.setItem('browse_cap_token', browseCapToken);
+            }
+        }
 
         showToast('Relation created', hash);
         resetRelForm();
@@ -1505,10 +1764,6 @@ function resetRelForm() {
 
 // ── New object ──
 function newObject() {
-    if (!namespace) {
-        showToast('Error', 'Enter a namespace first', true);
-        return;
-    }
     if (editorDirty && !confirm('You have unsaved changes. Continue?')) return;
 
     pathStack    = [];
@@ -1525,39 +1780,68 @@ function newObject() {
 
 // ── Save (path copying) ──
 async function saveContent() {
+    if (!namespace) {
+        showToast('Error', 'Enter a namespace first', true);
+        return;
+    }
     const content = document.getElementById('editor').value;
     const saveBtn = document.getElementById('save-btn');
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving…';
 
     try {
-        const stashRes = await fetch(`${API}/stash`, { method: 'POST', body: content });
+        const stashRes = await apiFetch(`${API}/stash`, { method: 'POST', body: content });
         if (!stashRes.ok) throw new Error('Stash failed');
-        let newHash = (await stashRes.text()).trim();
+        const stashData = await stashRes.json();
+        let newHash = stashData.hash;
 
+        // Store the capability issued by the server for this object.
+        // This binds ownership to the current user.
+        if (stashData.capability) {
+            const caps = JSON.parse(sessionStorage.getItem('capabilities') || '{}');
+            caps[newHash] = stashData.capability;
+            sessionStorage.setItem('capabilities', JSON.stringify(caps));
+            // Update active capability token to the one just issued.
+            capabilityToken = JSON.stringify(stashData.capability);
+            sessionStorage.setItem('capability_token', capabilityToken);
+            // Seed the browse capability if we don't have one yet.
+            // Any valid capability satisfies the PermRead check on metadata endpoints.
+            if (!browseCapToken) {
+                browseCapToken = capabilityToken;
+                sessionStorage.setItem('browse_cap_token', browseCapToken);
+            }
+        }
         for (let i = pathStack.length - 2; i >= 1; i--) {
-            const frame = pathStack[i];
-            const members = [...frame.members];
-            members[pathStack[i + 1] ? pathStack.indexOf(pathStack[i + 1]) - i - 1 : frame.index] = newHash;
-
             const parentFrame    = pathStack[i];
             const childIndex     = pathStack[i].index;
             const updatedMembers = [...parentFrame.members];
             updatedMembers[childIndex] = newHash;
 
-            const colRes = await fetch(`${API}/collection`, {
+            const colRes = await apiFetch(`${API}/collection`, {
                 method: 'POST',
                 body: JSON.stringify(updatedMembers),
                 headers: { 'Content-Type': 'application/json' }
             });
             if (!colRes.ok) throw new Error('Collection stash failed');
-            newHash = (await colRes.text()).trim();
+            const colData = await colRes.json();
+            newHash = colData.hash;
+
+            // Store the capability issued for this collection object.
+            if (colData.capability) {
+                const caps = JSON.parse(sessionStorage.getItem('capabilities') || '{}');
+                caps[newHash] = colData.capability;
+                sessionStorage.setItem('capabilities', JSON.stringify(caps));
+                if (!browseCapToken) {
+                    browseCapToken = JSON.stringify(colData.capability);
+                    sessionStorage.setItem('browse_cap_token', browseCapToken);
+                }
+            }
         }
 
         if (pathStack.length > 0) {
             const nameFrame = pathStack[0];
             const label     = nameFrame.label;
-            const nameRes   = await fetch(
+            const nameRes   = await apiFetch(
                 `${API}/name?namespace=${encodeURIComponent(namespace)}&label=${encodeURIComponent(label)}&hash=${newHash}`,
                 { method: 'POST' }
             );
@@ -1570,14 +1854,14 @@ async function saveContent() {
                 renderEditor(newHash, content);
                 return;
             }
-            const nameRes = await fetch(
+            const nameRes = await apiFetch(
                 `${API}/name?namespace=${encodeURIComponent(namespace)}&label=${encodeURIComponent(label)}&hash=${newHash}`,
                 { method: 'POST' }
             );
             if (!nameRes.ok) throw new Error('Name creation failed');
             currentLabel = label;
 
-            const listRes = await fetch(`${API}/names?namespace=${encodeURIComponent(namespace)}`);
+            const listRes = await apiFetch(`${API}/names?namespace=${encodeURIComponent(namespace)}`);
             nameList = await listRes.json();
         }
 
@@ -1586,8 +1870,9 @@ async function saveContent() {
         renderEditor(newHash, content);
         renderBreadcrumb();
 
-        const listRes = await fetch(`${API}/names?namespace=${encodeURIComponent(namespace)}`);
+        const listRes = await apiFetch(`${API}/names?namespace=${encodeURIComponent(namespace)}`);
         nameList = await listRes.json();
+        renderNameList();
 
         showToast('Saved', newHash);
 
@@ -1653,7 +1938,7 @@ async function handleImportFile(input) {
     showToast('Importing', file.name);
 
     try {
-        const res = await fetch(`${API}/import`, {
+        const res = await apiFetch(`${API}/import`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/gzip' },
             body: file,
