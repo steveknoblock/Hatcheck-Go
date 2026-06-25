@@ -19,31 +19,25 @@ type CapabilityMiddleware struct {
 	BootstrapToken string
 }
 
-// VerifiedRequest carries the verified capability and principal
-// into the inner handler after the middleware has confirmed them.
+// VerifiedRequest carries the verified identity and capability
+// through the middleware chain into the inner handler.
+// Principal and Email are always set by RequireAuth.
+// Capability is set by Protect if a capability token is present.
 type VerifiedRequest struct {
 	Capability metadata.CapabilityPayload
 	Principal  string
 	Email      string
 }
 
-// Protect wraps a handler with capability verification. The inner handler
-// receives a VerifiedRequest and is only called if verification passes.
-// It does not check whether the capability's Hash or Perm match the
-// specific object or operation — that is the responsibility of the
-// inner handler.
+// Protect wraps a handler with capability verification. It receives a
+// VerifiedRequest already populated with identity by RequireAuth, adds the
+// verified capability, and passes the complete VerifiedRequest to the inner
+// handler. The inner handler is only called if verification passes.
 func (cm *CapabilityMiddleware) Protect(
 	perm string,
 	inner func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest),
-) http.HandlerFunc {
-	return func(w http.ResponseWriter, req *http.Request) {
-		// Extract principal from auth service header.
-		principal := req.Header.Get("X-User-ID")
-		if principal == "" {
-			http.Error(w, "missing user identity", http.StatusUnauthorized)
-			return
-		}
-
+) func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	return func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		// Bootstrap token check — grants PermAdmin without a signed capability.
 		// Only active when HATCHECK_BOOTSTRAP_TOKEN is set. Should be unset
 		// once real admin capabilities have been issued.
@@ -58,10 +52,7 @@ func (cm *CapabilityMiddleware) Protect(
 					http.Error(w, "bootstrap token only grants admin access", http.StatusForbidden)
 					return
 				}
-				inner(w, req, VerifiedRequest{
-					Principal: principal,
-					Email:     req.Header.Get("X-User-Email"),
-				})
+				inner(w, req, vr)
 				return
 			}
 		}
@@ -81,7 +72,7 @@ func (cm *CapabilityMiddleware) Protect(
 		}
 
 		// Verify signature, expiry, and principal.
-		if !metadata.VerifyCapability(cm.Key, cap, principal) {
+		if !metadata.VerifyCapability(cm.Key, cap, vr.Principal) {
 			http.Error(w, "invalid or expired capability", http.StatusForbidden)
 			return
 		}
@@ -101,10 +92,9 @@ func (cm *CapabilityMiddleware) Protect(
 				return
 			}
 		}
-		inner(w, req, VerifiedRequest{
-			Capability: cap,
-			Principal:  principal,
-			Email:      req.Header.Get("X-User-Email"),
-		})
+
+		// Add the verified capability to the VerifiedRequest and call through.
+		vr.Capability = cap
+		inner(w, req, vr)
 	}
 }

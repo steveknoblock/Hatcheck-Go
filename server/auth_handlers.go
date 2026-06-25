@@ -47,12 +47,6 @@ func loginHandler(w http.ResponseWriter, req *http.Request, authClient *auth.Cli
 }
 
 // authenticateHandler handles the magic link callback from Stytch.
-// The user clicks the magic link in their email and is redirected here
-// with a token query parameter. The server exchanges the token for a
-// session JWT and returns it to the client.
-//
-// GET /auth/authenticate?token=<stytch_token>&stytch_token_type=magic_links
-// authenticateHandler handles the magic link callback from Stytch.
 // It exchanges the Stytch token for a session JWT, issues a wildcard read
 // capability for the authenticated user, and redirects to the UI with both.
 //
@@ -75,6 +69,7 @@ func authenticateHandler(w http.ResponseWriter, req *http.Request, authClient *a
 		http.Error(w, "authentication failed", http.StatusUnauthorized)
 		return
 	}
+
 	// Issue a wildcard read capability for this user. This allows them to
 	// read any object in the CAS without needing a per-object capability.
 	// Write and admin operations still require a specific capability.
@@ -121,10 +116,10 @@ func logoutHandler(w http.ResponseWriter, req *http.Request) {
 
 // --- JWT middleware ---
 
-// AuthMiddleware wraps a capability-protected handler with JWT validation.
+// AuthMiddleware wraps handlers with JWT validation.
 // It extracts the Bearer token from the Authorization header, validates it
-// against Stytch, and sets the verified user ID on the request via the
-// X-User-ID header before passing to the next handler.
+// against Stytch, builds a VerifiedRequest from the identity, and passes
+// it to the next handler in the chain.
 //
 // The middleware tries local JWT validation first (no network call) and
 // falls back to remote validation if local validation fails.
@@ -132,10 +127,13 @@ type AuthMiddleware struct {
 	Client *auth.Client
 }
 
-// RequireAuth adds JWT validation in front of a handler that expects X-User-ID to
-// be set. It is designed to sit before CapabilityMiddleware in the chain.
-func (am *AuthMiddleware) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, req *http.Request) {
+// RequireAuth validates the session JWT and builds a VerifiedRequest from
+// the verified identity. It is the single point where VerifiedRequest is
+// constructed — all subsequent middleware and handlers receive it by value.
+func (am *AuthMiddleware) RequireAuth(
+	next func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest),
+) func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	return func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		authHeader := req.Header.Get("Authorization")
 		if authHeader == "" {
 			http.Error(w, "missing Authorization header", http.StatusUnauthorized)
@@ -153,38 +151,29 @@ func (am *AuthMiddleware) RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// AuthenticateJWT tries local validation first and falls back to
-		// remote automatically — no separate fallback needed.
 		identity, err := am.Client.ValidateSessionJWT(req.Context(), sessionJWT)
 		if err != nil {
 			http.Error(w, "invalid or expired session", http.StatusUnauthorized)
 			return
 		}
 
-		// Set the verified user ID so the capability middleware can read it.
-		// This replaces the manual X-User-ID header that would otherwise be
-		// set by an upstream auth proxy.
-		req.Header.Set("X-User-ID", identity.UserID)
-
-		// Optionally propagate email for capability issuance opt-in.
-		if identity.Email != "" {
-			req.Header.Set("X-User-Email", identity.Email)
+		// Build the VerifiedRequest from the validated identity.
+		// Capability fields are left zero — Protect fills them in if present.
+		vr = VerifiedRequest{
+			Principal: identity.UserID,
+			Email:     identity.Email,
 		}
 
-		next(w, req)
+		next(w, req, vr)
 	}
 }
 
-// RequireAuthWithIdentity is like RequireAuth but passes a VerifiedRequest to the inner
-// handler directly, for routes that are auth-only with no capability check.
-func (am *AuthMiddleware) RequireAuthWithIdentity(
-	inner func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest),
-) http.HandlerFunc {
-	return am.RequireAuth(func(w http.ResponseWriter, req *http.Request) {
-		vr := VerifiedRequest{
-			Principal: req.Header.Get("X-User-ID"),
-			Email:     req.Header.Get("X-User-Email"),
-		}
-		inner(w, req, vr)
-	})
+// Adapt converts a func(w, req, vr VerifiedRequest) to http.HandlerFunc
+// for use with http.HandleFunc. It is the only place in the server where
+// this conversion happens — all middleware and handlers use the inner
+// signature throughout the chain.
+func Adapt(inner func(http.ResponseWriter, *http.Request, VerifiedRequest)) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		inner(w, req, VerifiedRequest{})
+	}
 }

@@ -11,8 +11,8 @@ import (
 )
 
 // RateLimitMiddleware holds a per-user map of token bucket limiters.
-// Each limiter is keyed on the authenticated Stytch user ID, which
-// AuthMiddleware sets as X-User-ID after validating the session JWT.
+// Each limiter is keyed on the Principal field of the VerifiedRequest,
+// which RequireAuth sets after validating the session JWT.
 type RateLimitMiddleware struct {
 	mu       sync.Mutex
 	limiters map[string]*rate.Limiter
@@ -44,73 +44,50 @@ func (rl *RateLimitMiddleware) limiterFor(userID string) *rate.Limiter {
 	return l
 }
 
-// Limit wraps a HandlerFunc with rate limiting keyed on the authenticated
-// user ID. It sits inside am.RequireAuth so that X-User-ID is always set
-// before the limiter sees the request.
+// checkLimit performs the rate limit check and sets response headers.
+// Returns true if the request is allowed, false if it was rejected.
+// On rejection the 429 response is written before returning false.
+func (rl *RateLimitMiddleware) checkLimit(w http.ResponseWriter, vr VerifiedRequest) bool {
+	if vr.Principal == "" {
+		http.Error(w, "missing user identity", http.StatusUnauthorized)
+		return false
+	}
+
+	limiter := rl.limiterFor(vr.Principal)
+	reservation := limiter.Reserve()
+
+	// Always set the limit and remaining headers.
+	w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", rl.burst))
+	remaining := int(math.Max(0, limiter.Tokens()))
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
+
+	if !reservation.OK() || reservation.Delay() > 0 {
+		reservation.Cancel()
+		retryAfter := int(math.Ceil(reservation.Delay().Seconds()))
+		w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfter))
+		http.Error(w, "too many requests", http.StatusTooManyRequests)
+		return false
+	}
+
+	return true
+}
+
+// Limit wraps a handler with rate limiting keyed on vr.Principal.
+// It sits between RequireAuth and Protect in the chain, using the
+// same func(w, req, vr VerifiedRequest) signature throughout.
 //
 // Sets the following headers on every response:
 //
 //	X-RateLimit-Limit     — configured burst size
 //	X-RateLimit-Remaining — tokens available after this request
 //	Retry-After           — seconds until next token available (429 only)
-func (rl *RateLimitMiddleware) Limit(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, req *http.Request) {
-		userID := req.Header.Get("X-User-ID")
-		if userID == "" {
-			http.Error(w, "missing user identity", http.StatusUnauthorized)
-			return
-		}
-
-		limiter := rl.limiterFor(userID)
-		reservation := limiter.Reserve()
-
-		// Always set the limit and remaining headers.
-		w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", rl.burst))
-		remaining := int(math.Max(0, limiter.Tokens()))
-		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
-
-		if !reservation.OK() || reservation.Delay() > 0 {
-			// Cancel the reservation so the token is returned to the bucket.
-			reservation.Cancel()
-			retryAfter := int(math.Ceil(reservation.Delay().Seconds()))
-			w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfter))
-			http.Error(w, "too many requests", http.StatusTooManyRequests)
-			return
-		}
-
-		next(w, req)
-	}
-}
-
-// LimitFunc wraps a func(w, req, vr VerifiedRequest) with rate limiting keyed
-// on the authenticated user ID. Use this for routes that go through
-// RequireAuthWithIdentity instead of RequireAuth, since those routes use a
-// different inner function signature.
-func (rl *RateLimitMiddleware) LimitFunc(next func(http.ResponseWriter, *http.Request, VerifiedRequest)) func(http.ResponseWriter, *http.Request, VerifiedRequest) {
+func (rl *RateLimitMiddleware) Limit(
+	next func(http.ResponseWriter, *http.Request, VerifiedRequest),
+) func(http.ResponseWriter, *http.Request, VerifiedRequest) {
 	return func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		userID := req.Header.Get("X-User-ID")
-		if userID == "" {
-			http.Error(w, "missing user identity", http.StatusUnauthorized)
-			return
+		if rl.checkLimit(w, vr) {
+			next(w, req, vr)
 		}
-
-		limiter := rl.limiterFor(userID)
-		reservation := limiter.Reserve()
-
-		// Always set the limit and remaining headers.
-		w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", rl.burst))
-		remaining := int(math.Max(0, limiter.Tokens()))
-		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
-
-		if !reservation.OK() || reservation.Delay() > 0 {
-			reservation.Cancel()
-			retryAfter := int(math.Ceil(reservation.Delay().Seconds()))
-			w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfter))
-			http.Error(w, "too many requests", http.StatusTooManyRequests)
-			return
-		}
-
-		next(w, req, vr)
 	}
 }
 
