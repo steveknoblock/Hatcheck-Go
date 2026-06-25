@@ -2,95 +2,104 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"math"
 	"net/http"
+	"sync"
 	"time"
 
-	"github.com/sethvargo/go-limiter/httplimit"
-	"github.com/sethvargo/go-limiter/memorystore"
+	"golang.org/x/time/rate"
 )
 
-// Pool wraps httplimit.Middleware to add the Limit convenience method.
-// We can't define methods directly on httplimit.Middleware since it belongs
-// to an external package, so we own this type instead.
-type Pool struct {
-	mw *httplimit.Middleware
+// RateLimitMiddleware holds a per-user map of token bucket limiters.
+// Each limiter is keyed on the authenticated Stytch user ID, which
+// AuthMiddleware sets as X-User-ID after validating the session JWT.
+type RateLimitMiddleware struct {
+	mu       sync.Mutex
+	limiters map[string]*rate.Limiter
+	tokens   rate.Limit // steady-state rate in requests per second
+	burst    int        // maximum burst size
 }
 
-// Limit wraps a HandlerFunc with this pool's rate limiter.
-// httplimit.Middleware.Handle accepts an http.Handler and returns an
-// http.Handler; this method bridges that to the HandlerFunc pattern
-// used throughout this server.
-func (p *Pool) Limit(next http.HandlerFunc) http.HandlerFunc {
-	return p.mw.Handle(next).ServeHTTP
+// NewRateLimitMiddleware creates a RateLimitMiddleware with the given
+// steady-state rate and burst size.
+func NewRateLimitMiddleware(tokens rate.Limit, burst int) *RateLimitMiddleware {
+	return &RateLimitMiddleware{
+		limiters: make(map[string]*rate.Limiter),
+		tokens:   tokens,
+		burst:    burst,
+	}
 }
 
-// RateLimiters holds the three limiter pools used across the API.
-// Each pool is keyed on the authenticated Stytch user ID (X-User-ID),
-// which AuthMiddleware sets after validating the session JWT.
-type RateLimiters struct {
-	Read  *Pool // /fetch, /list, /query, /namespaces, /names, /relations, /tags
-	Write *Pool // /stash, /collection, /relation, /name
-	Admin *Pool // /export, /import, /capability, /capability/revoke
+// limiterFor returns the rate.Limiter for the given user ID, creating
+// one if it does not already exist.
+func (rl *RateLimitMiddleware) limiterFor(userID string) *rate.Limiter {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	l, ok := rl.limiters[userID]
+	if !ok {
+		l = rate.NewLimiter(rl.tokens, rl.burst)
+		rl.limiters[userID] = l
+	}
+	return l
 }
 
-// userIDKeyFunc returns a KeyFunc that extracts the authenticated user ID
-// from the X-User-ID header. AuthMiddleware sets this header after validating
-// the session JWT, so it is always the verified Stytch user ID by the time
-// any rate limiter sees the request.
-func userIDKeyFunc() httplimit.KeyFunc {
-	return func(r *http.Request) (string, error) {
-		uid := r.Header.Get("X-User-ID")
-		if uid == "" {
-			return "", fmt.Errorf("missing X-User-ID header")
+// Limit wraps a HandlerFunc with rate limiting keyed on the authenticated
+// user ID. It sits inside am.RequireAuth so that X-User-ID is always set
+// before the limiter sees the request.
+//
+// Sets the following headers on every response:
+//
+//	X-RateLimit-Limit     — configured burst size
+//	X-RateLimit-Remaining — tokens available after this request
+//	Retry-After           — seconds until next token available (429 only)
+func (rl *RateLimitMiddleware) Limit(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		userID := req.Header.Get("X-User-ID")
+		if userID == "" {
+			http.Error(w, "missing user identity", http.StatusUnauthorized)
+			return
 		}
-		return uid, nil
+
+		limiter := rl.limiterFor(userID)
+		reservation := limiter.Reserve()
+
+		// Always set the limit and remaining headers.
+		w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", rl.burst))
+		remaining := int(math.Max(0, limiter.Tokens()))
+		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
+
+		if !reservation.OK() || reservation.Delay() > 0 {
+			// Cancel the reservation so the token is returned to the bucket.
+			reservation.Cancel()
+			retryAfter := int(math.Ceil(reservation.Delay().Seconds()))
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfter))
+			http.Error(w, "too many requests", http.StatusTooManyRequests)
+			return
+		}
+
+		next(w, req)
 	}
 }
 
-// newPool creates a single Pool with the given token budget and window interval.
-func newPool(tokens uint64, interval time.Duration) (*Pool, error) {
-	store, err := memorystore.New(&memorystore.Config{
-		Tokens:   tokens,
-		Interval: interval,
-	})
-	if err != nil {
-		return nil, err
-	}
-	mw, err := httplimit.NewMiddleware(store, userIDKeyFunc())
-	if err != nil {
-		return nil, err
-	}
-	return &Pool{mw: mw}, nil
+// RateLimiters holds three pools matching the cost profile of the API routes.
+type RateLimiters struct {
+	Read  *RateLimitMiddleware // /fetch, /list, /query, /namespaces, /names, /relations, /tags
+	Write *RateLimitMiddleware // /stash, /collection, /relation, /name
+	Admin *RateLimitMiddleware // /export, /import, /capability, /capability/revoke
 }
 
-// NewRateLimiters constructs the three limiter pools. Call once from main()
-// and pass the result to each route registration.
+// NewRateLimiters constructs the three pools. Call once from main().
 //
 // Starting limits — adjust based on observed usage:
 //
-//	Read:  60 requests per minute per user
-//	Write: 20 requests per minute per user
-//	Admin:  5 requests per minute per user (export/import traverse the full graph)
+//	Read:  1 request/second sustained, burst of 10
+//	Write: 1 request/5 seconds sustained, burst of 4
+//	Admin: 1 request/30 seconds sustained, burst of 2
 func NewRateLimiters() *RateLimiters {
-	read, err := newPool(60, time.Minute)
-	if err != nil {
-		log.Fatalf("failed to create read rate limiter: %v", err)
-	}
-
-	write, err := newPool(20, time.Minute)
-	if err != nil {
-		log.Fatalf("failed to create write rate limiter: %v", err)
-	}
-
-	admin, err := newPool(5, time.Minute)
-	if err != nil {
-		log.Fatalf("failed to create admin rate limiter: %v", err)
-	}
-
 	return &RateLimiters{
-		Read:  read,
-		Write: write,
-		Admin: admin,
+		Read:  NewRateLimitMiddleware(rate.Every(time.Second), 10),
+		Write: NewRateLimitMiddleware(rate.Every(5*time.Second), 4),
+		Admin: NewRateLimitMiddleware(rate.Every(30*time.Second), 2),
 	}
 }
