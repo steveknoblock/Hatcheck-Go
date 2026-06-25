@@ -1,6 +1,29 @@
-	rl := NewRateLimiters()
+package main
 
-	// Auth routes — not JWT protected since these establish identity.
+import (
+	"net/http"
+
+	"github.com/steveknoblock/hatcheck-go/internal/auth"
+	"github.com/steveknoblock/hatcheck-go/internal/cas"
+	"github.com/steveknoblock/hatcheck-go/internal/metadata"
+)
+
+// registerRoutes wires all HTTP handlers to their paths. It is the single
+// place in the server where routes are defined, keeping main() focused on
+// initialisation rather than routing.
+func registerRoutes(
+	store *cas.Store,
+	meta *metadata.Store,
+	am *AuthMiddleware,
+	cm *CapabilityMiddleware,
+	rl *RateLimiters,
+	authClient *auth.Client,
+	objPath string,
+	metaPath string,
+	uiPath string,
+) {
+	// Auth routes — not capability protected, but also not JWT protected
+	// since these are the routes that establish identity in the first place.
 	http.HandleFunc("/auth/login", func(w http.ResponseWriter, req *http.Request) {
 		loginHandler(w, req, authClient)
 	})
@@ -61,3 +84,4 @@
 	})))))
 
 	http.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.Dir(uiPath))))
+}
