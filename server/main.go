@@ -247,7 +247,12 @@ func nameHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store,
 		fullLabel = namespace + "/" + label
 	}
 
-	if err := meta.AppendName(fullLabel, hash); err != nil {
+	// Try to create the name. If it already exists, update it instead.
+	err := meta.AppendNameCreate(fullLabel, hash)
+	if err != nil {
+		err = meta.AppendNameUpdate(fullLabel, hash)
+	}
+	if err != nil {
 		http.Error(w, "failed to record name: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -327,7 +332,7 @@ func relationHandler(w http.ResponseWriter, req *http.Request, store *cas.Store,
 
 	hash, cap, err := stashAndIssue(store, meta, key, content, vr.Principal, vr.Email,
 		func(hash string) error {
-			return meta.AppendRelation(hash, rel)
+			return meta.AppendRelation(hash, rel.From, rel.Rel, rel.To)
 		},
 	)
 	if err != nil {
