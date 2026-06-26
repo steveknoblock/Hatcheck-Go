@@ -58,24 +58,13 @@ func innerOK(called *bool) func(http.ResponseWriter, *http.Request, VerifiedRequ
 	}
 }
 
-// --- Protect: missing headers ---
-
-func TestProtect_MissingUserID(t *testing.T) {
-	cm := newTestMiddleware(t)
-	called := false
-	handler := cm.Protect(PermRead, innerOK(&called))
-
-	req := httptest.NewRequest(http.MethodGet, "/fetch?hash=abc", nil)
-	w := httptest.NewRecorder()
-	handler(w, req)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("expected 401, got %d", w.Code)
-	}
-	if called {
-		t.Error("expected inner handler not to be called")
-	}
+// vrWithPrincipalFor returns a VerifiedRequest with the given principal.
+// Used to simulate what RequireAuth sets before Protect runs.
+func vrWithPrincipalFor(principal string) VerifiedRequest {
+	return VerifiedRequest{Principal: principal}
 }
+
+// --- Protect: missing capability token ---
 
 func TestProtect_MissingCapabilityToken(t *testing.T) {
 	cm := newTestMiddleware(t)
@@ -83,12 +72,11 @@ func TestProtect_MissingCapabilityToken(t *testing.T) {
 	handler := cm.Protect(PermRead, innerOK(&called))
 
 	req := httptest.NewRequest(http.MethodGet, "/fetch?hash=abc", nil)
-	req.Header.Set("X-User-ID", "alice")
 	w := httptest.NewRecorder()
-	handler(w, req)
+	handler(w, req, vrWithPrincipalFor("alice"))
 
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("expected 401, got %d", w.Code)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", w.Code)
 	}
 	if called {
 		t.Error("expected inner handler not to be called")
@@ -103,10 +91,9 @@ func TestProtect_MalformedToken(t *testing.T) {
 	handler := cm.Protect(PermRead, innerOK(&called))
 
 	req := httptest.NewRequest(http.MethodGet, "/fetch", nil)
-	req.Header.Set("X-User-ID", "alice")
 	req.Header.Set("X-Capability-Token", "not-valid-json")
 	w := httptest.NewRecorder()
-	handler(w, req)
+	handler(w, req, vrWithPrincipalFor("alice"))
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
@@ -125,10 +112,9 @@ func TestProtect_ValidCapability(t *testing.T) {
 
 	token := signedCapToken(t, "hash1", PermRead, "alice", futureExpiry())
 	req := httptest.NewRequest(http.MethodGet, "/fetch?hash=hash1", nil)
-	req.Header.Set("X-User-ID", "alice")
 	req.Header.Set("X-Capability-Token", token)
 	w := httptest.NewRecorder()
-	handler(w, req)
+	handler(w, req, vrWithPrincipalFor("alice"))
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
@@ -147,10 +133,9 @@ func TestProtect_ExpiredCapability(t *testing.T) {
 
 	token := signedCapToken(t, "hash1", PermRead, "alice", expiredExpiry())
 	req := httptest.NewRequest(http.MethodGet, "/fetch?hash=hash1", nil)
-	req.Header.Set("X-User-ID", "alice")
 	req.Header.Set("X-Capability-Token", token)
 	w := httptest.NewRecorder()
-	handler(w, req)
+	handler(w, req, vrWithPrincipalFor("alice"))
 
 	if w.Code != http.StatusForbidden {
 		t.Errorf("expected 403, got %d", w.Code)
@@ -167,12 +152,12 @@ func TestProtect_WrongPrincipal(t *testing.T) {
 	called := false
 	handler := cm.Protect(PermRead, innerOK(&called))
 
+	// Capability was issued to alice but bob is presenting it.
 	token := signedCapToken(t, "hash1", PermRead, "alice", futureExpiry())
 	req := httptest.NewRequest(http.MethodGet, "/fetch?hash=hash1", nil)
-	req.Header.Set("X-User-ID", "bob") // bob presents alice's token
 	req.Header.Set("X-Capability-Token", token)
 	w := httptest.NewRecorder()
-	handler(w, req)
+	handler(w, req, vrWithPrincipalFor("bob"))
 
 	if w.Code != http.StatusForbidden {
 		t.Errorf("expected 403, got %d", w.Code)
@@ -192,10 +177,9 @@ func TestProtect_WrongPerm(t *testing.T) {
 
 	token := signedCapToken(t, "hash1", PermRead, "alice", futureExpiry())
 	req := httptest.NewRequest(http.MethodPost, "/stash", nil)
-	req.Header.Set("X-User-ID", "alice")
 	req.Header.Set("X-Capability-Token", token)
 	w := httptest.NewRecorder()
-	handler(w, req)
+	handler(w, req, vrWithPrincipalFor("alice"))
 
 	if w.Code != http.StatusForbidden {
 		t.Errorf("expected 403, got %d", w.Code)
@@ -218,10 +202,9 @@ func TestProtect_RevokedCapability(t *testing.T) {
 
 	b, _ := json.Marshal(cap)
 	req := httptest.NewRequest(http.MethodGet, "/fetch?hash=hash1", nil)
-	req.Header.Set("X-User-ID", "alice")
 	req.Header.Set("X-Capability-Token", string(b))
 	w := httptest.NewRecorder()
-	handler(w, req)
+	handler(w, req, vrWithPrincipalFor("alice"))
 
 	if w.Code != http.StatusForbidden {
 		t.Errorf("expected 403, got %d", w.Code)
@@ -243,10 +226,9 @@ func TestProtect_VerifiedRequestPopulated(t *testing.T) {
 
 	token := signedCapToken(t, "hash1", PermRead, "alice", futureExpiry())
 	req := httptest.NewRequest(http.MethodGet, "/fetch?hash=hash1", nil)
-	req.Header.Set("X-User-ID", "alice")
 	req.Header.Set("X-Capability-Token", token)
 	w := httptest.NewRecorder()
-	handler(w, req)
+	handler(w, req, vrWithPrincipalFor("alice"))
 
 	if gotVR.Principal != "alice" {
 		t.Errorf("expected principal alice, got %q", gotVR.Principal)
@@ -264,10 +246,9 @@ func TestProtect_BootstrapTokenGrantsAdmin(t *testing.T) {
 	handler := cm.Protect(PermAdmin, innerOK(&called))
 
 	req := httptest.NewRequest(http.MethodPost, "/capability", nil)
-	req.Header.Set("X-User-ID", "alice")
 	req.Header.Set("X-Bootstrap-Token", "secret-bootstrap")
 	w := httptest.NewRecorder()
-	handler(w, req)
+	handler(w, req, vrWithPrincipalFor("alice"))
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
@@ -283,10 +264,9 @@ func TestProtect_BootstrapTokenWrongValue(t *testing.T) {
 	handler := cm.Protect(PermAdmin, innerOK(&called))
 
 	req := httptest.NewRequest(http.MethodPost, "/capability", nil)
-	req.Header.Set("X-User-ID", "alice")
 	req.Header.Set("X-Bootstrap-Token", "wrong-token")
 	w := httptest.NewRecorder()
-	handler(w, req)
+	handler(w, req, vrWithPrincipalFor("alice"))
 
 	if w.Code != http.StatusForbidden {
 		t.Errorf("expected 403, got %d", w.Code)
@@ -303,10 +283,9 @@ func TestProtect_BootstrapTokenOnlyGrantsAdmin(t *testing.T) {
 	handler := cm.Protect(PermRead, innerOK(&called))
 
 	req := httptest.NewRequest(http.MethodGet, "/fetch", nil)
-	req.Header.Set("X-User-ID", "alice")
 	req.Header.Set("X-Bootstrap-Token", "secret-bootstrap")
 	w := httptest.NewRecorder()
-	handler(w, req)
+	handler(w, req, vrWithPrincipalFor("alice"))
 
 	if w.Code != http.StatusForbidden {
 		t.Errorf("expected 403, got %d", w.Code)
@@ -323,14 +302,13 @@ func TestProtect_BootstrapTokenDisabledWhenEmpty(t *testing.T) {
 	handler := cm.Protect(PermAdmin, innerOK(&called))
 
 	req := httptest.NewRequest(http.MethodPost, "/capability", nil)
-	req.Header.Set("X-User-ID", "alice")
 	req.Header.Set("X-Bootstrap-Token", "any-value")
 	w := httptest.NewRecorder()
-	handler(w, req)
+	handler(w, req, vrWithPrincipalFor("alice"))
 
-	// Should fall through to capability token check and fail with 401.
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("expected 401, got %d", w.Code)
+	// Should fall through to capability token check and fail with 403.
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", w.Code)
 	}
 	if called {
 		t.Error("expected inner handler not to be called")
