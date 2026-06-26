@@ -50,7 +50,7 @@ func stashAndIssue(
 	}
 
 	expires := time.Now().UTC().Add(capabilityExpiry)
-	cap := metadata.SignCapability(key, hash, PermWrite, principal, email, expires)
+	cap := metadata.SignCapability(key, hash, PermRead, principal, email, expires)
 	if err := meta.AppendCapability(cap); err != nil {
 		log.Printf("warning: failed to record capability for %s: %v", hash, err)
 	}
