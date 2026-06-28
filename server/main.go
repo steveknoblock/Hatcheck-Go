@@ -229,8 +229,8 @@ func nameHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store,
 	label := req.URL.Query().Get("label")
 	hash := req.URL.Query().Get("hash")
 
-	if label == "" || hash == "" {
-		http.Error(w, "missing label or hash parameter", http.StatusBadRequest)
+	if namespace == "" || label == "" || hash == "" {
+		http.Error(w, "missing namespace, label, or hash parameter", http.StatusBadRequest)
 		return
 	}
 
@@ -241,26 +241,24 @@ func nameHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store,
 		return
 	}
 
-	// Prepend namespace if provided.
-	fullLabel := label
-	if namespace != "" {
-		fullLabel = namespace + "/" + label
-	}
+	fullLabel := namespace + "/" + label
 
-	// Try create first, fall back to update.
+	// Try to create the name. If it already exists, update it instead.
 	err := meta.AppendNameCreate(fullLabel, hash)
 	if err != nil {
-		if err := meta.AppendNameUpdate(fullLabel, hash); err != nil {
-			http.Error(w, "failed to update name: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
+		err = meta.AppendNameUpdate(fullLabel, hash)
+	}
+	if err != nil {
+		http.Error(w, "failed to record name: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "%s\n", fullLabel)
+	fmt.Fprintf(w, "%s -> %s\n", fullLabel, hash)
 }
 
-// collectionHandler stashes a Collection object and returns its hash and capability.
+// collectionHandler stores a JSON array of hashes as a CAS object,
+// records it in metadata, issues a write capability, and returns both.
 // POST /collection — body is a JSON array of hashes
 func collectionHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, key []byte, vr VerifiedRequest) {
 	if req.Method != http.MethodPost {
@@ -277,11 +275,12 @@ func collectionHandler(w http.ResponseWriter, req *http.Request, store *cas.Stor
 
 	var hashes []string
 	if err := json.Unmarshal(body, &hashes); err != nil {
-		http.Error(w, "body must be a JSON array of hashes", http.StatusBadRequest)
+		http.Error(w, "body must be a JSON array of hash strings", http.StatusBadRequest)
 		return
 	}
 
 	content := string(body)
+
 	hash, cap, err := stashAndIssue(store, meta, key, content, vr.Principal, vr.Email,
 		func(hash string) error {
 			return meta.AppendCollection(hash, hashes)
@@ -289,13 +288,110 @@ func collectionHandler(w http.ResponseWriter, req *http.Request, store *cas.Stor
 	)
 	if err != nil {
 		log.Printf("collection error: %v", err)
-		http.Error(w, "failed to stash collection", http.StatusInternalServerError)
+		http.Error(w, "failed to store collection", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(stashResponse{Hash: hash, Capability: cap})
+}
+
+// relationHandler stores a typed link between two hashes as a CAS object,
+// records it in metadata, issues a write capability, and returns both.
+// POST /relation — body is JSON {"from":"<hash>","rel":"<type>","to":"<hash>"}
+func relationHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, key []byte, vr VerifiedRequest) {
+	if req.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		return
+	}
+	defer req.Body.Close()
+
+	var rel metadata.RelationPayload
+	if err := json.Unmarshal(body, &rel); err != nil {
+		http.Error(w, `body must be JSON: {"from":"<hash>","rel":"<type>","to":"<hash>"}`, http.StatusBadRequest)
+		return
+	}
+
+	if rel.From == "" || rel.Rel == "" || rel.To == "" {
+		http.Error(w, "from, rel, and to are all required", http.StatusBadRequest)
+		return
+	}
+
+	content := string(body)
+
+	hash, cap, err := stashAndIssue(store, meta, key, content, vr.Principal, vr.Email,
+		func(hash string) error {
+			return meta.AppendRelation(hash, rel.From, rel.Rel, rel.To)
+		},
+	)
+	if err != nil {
+		log.Printf("relation error: %v", err)
+		http.Error(w, "failed to store relation", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(stashResponse{Hash: hash, Capability: cap})
+}
+
+// relationsHandler returns all relations for the given hash.
+// GET /relations?hash=<hash>
+func relationsHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, vr VerifiedRequest) {
+	if req.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	hash := req.URL.Query().Get("hash")
+	if hash == "" {
+		http.Error(w, "missing hash parameter", http.StatusBadRequest)
+		return
+	}
+
+	outgoing, incoming := meta.RelationsForHash(hash)
+
+	if outgoing == nil {
+		outgoing = []metadata.RelationPayload{}
+	}
+	if incoming == nil {
+		incoming = []metadata.RelationPayload{}
+	}
+
+	type relationsResponse struct {
+		Outgoing []metadata.RelationPayload `json:"outgoing"`
+		Incoming []metadata.RelationPayload `json:"incoming"`
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(relationsResponse{
+		Outgoing: outgoing,
+		Incoming: incoming,
+	})
+}
+
+// tagsHandler returns all known tag keys from the tag index.
+// GET /tags
+func tagsHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, vr VerifiedRequest) {
+	if req.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	tags := meta.AllTags()
+	if tags == nil {
+		tags = []string{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tags)
 }
 
 // exportHandler streams a tar.gz archive to the client.
@@ -363,102 +459,6 @@ func importHandler(w http.ResponseWriter, req *http.Request, objPath, metaPath s
 
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintln(w, "import successful")
-}
-
-// relationHandler stashes a Relation object and logs it to the metadata store.
-// POST /relation?from=<hash>&rel=<predicate>&to=<hash>
-func relationHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, key []byte, vr VerifiedRequest) {
-	if req.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	from := req.URL.Query().Get("from")
-	rel := req.URL.Query().Get("rel")
-	to := req.URL.Query().Get("to")
-
-	if from == "" || rel == "" || to == "" {
-		http.Error(w, "missing from, rel, or to parameter", http.StatusBadRequest)
-		return
-	}
-
-	type relationObject struct {
-		From string `json:"from"`
-		Rel  string `json:"rel"`
-		To   string `json:"to"`
-	}
-	content, err := json.Marshal(relationObject{From: from, Rel: rel, To: to})
-	if err != nil {
-		http.Error(w, "failed to marshal relation", http.StatusInternalServerError)
-		return
-	}
-
-	hash, cap, err := stashAndIssue(store, meta, key, string(content), vr.Principal, vr.Email,
-		func(hash string) error {
-			return meta.AppendRelation(hash, from, rel, to)
-		},
-	)
-	if err != nil {
-		log.Printf("relation error: %v", err)
-		http.Error(w, "failed to stash relation", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(stashResponse{Hash: hash, Capability: cap})
-}
-
-// relationsHandler returns all outgoing and incoming relations for a given hash.
-// GET /relations?hash=<hash>
-func relationsHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, vr VerifiedRequest) {
-	if req.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	hash := req.URL.Query().Get("hash")
-	if hash == "" {
-		http.Error(w, "missing hash parameter", http.StatusBadRequest)
-		return
-	}
-
-	outgoing, incoming := meta.RelationsForHash(hash)
-
-	if outgoing == nil {
-		outgoing = []metadata.RelationPayload{}
-	}
-	if incoming == nil {
-		incoming = []metadata.RelationPayload{}
-	}
-
-	type relationsResponse struct {
-		Outgoing []metadata.RelationPayload `json:"outgoing"`
-		Incoming []metadata.RelationPayload `json:"incoming"`
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(relationsResponse{
-		Outgoing: outgoing,
-		Incoming: incoming,
-	})
-}
-
-// tagsHandler returns all known tag keys from the tag index.
-// GET /tags
-func tagsHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, vr VerifiedRequest) {
-	if req.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	tags := meta.AllTags()
-	if tags == nil {
-		tags = []string{}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(tags)
 }
 
 // issueHandler creates and signs a new capability for the given principal,
@@ -565,7 +565,7 @@ func main() {
 		log.Fatal("HATCHECK_SIGNING_KEY environment variable must be set")
 	}
 
-	// Initialise the CAS with a SHA-256 hash function.
+	// Initialise the CAS with an MD5 hash function.
 	store, err := cas.New(objPath, func(content string) string {
 		sum := md5.Sum([]byte(content))
 		return hex.EncodeToString(sum[:])
@@ -603,70 +603,9 @@ func main() {
 	}
 
 	am := &AuthMiddleware{Client: authClient}
-
 	rl := NewRateLimiters()
 
-	// Auth routes — not JWT protected since these establish identity.
-	http.HandleFunc("/auth/login", func(w http.ResponseWriter, req *http.Request) {
-		loginHandler(w, req, authClient)
-	})
-	http.HandleFunc("/auth/authenticate", func(w http.ResponseWriter, req *http.Request) {
-		authenticateHandler(w, req, authClient, meta, cm.Key)
-	})
-	http.HandleFunc("/auth/logout", logoutHandler)
-
-	// Stash is auth-only — no capability required. The server issues a
-	// capability for the resulting hash automatically, making stash the
-	// ownership creation point.
-	http.HandleFunc("/stash", Adapt(am.RequireAuth(rl.Write.Limit(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		stashHandler(w, req, store, meta, cm.Key, vr)
-	}))))
-	http.HandleFunc("/fetch", Adapt(am.RequireAuth(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		fetchHandler(w, req, store, vr)
-	})))))
-	http.HandleFunc("/list", Adapt(am.RequireAuth(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		listHandler(w, req, store, meta, vr)
-	})))))
-	http.HandleFunc("/query", Adapt(am.RequireAuth(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		queryHandler(w, req, meta, vr)
-	})))))
-	http.HandleFunc("/namespaces", Adapt(am.RequireAuth(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		namespacesHandler(w, req, meta, vr)
-	})))))
-	http.HandleFunc("/names", Adapt(am.RequireAuth(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		namesHandler(w, req, meta, vr)
-	})))))
-	http.HandleFunc("/name", Adapt(am.RequireAuth(rl.Write.Limit(cm.Protect(PermWrite, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		nameHandler(w, req, meta, vr)
-	})))))
-	http.HandleFunc("/collection", Adapt(am.RequireAuth(rl.Write.Limit(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		collectionHandler(w, req, store, meta, cm.Key, vr)
-	}))))
-	http.HandleFunc("/relation", Adapt(am.RequireAuth(rl.Write.Limit(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		relationHandler(w, req, store, meta, cm.Key, vr)
-	}))))
-	http.HandleFunc("/relations", Adapt(am.RequireAuth(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		relationsHandler(w, req, meta, vr)
-	})))))
-	http.HandleFunc("/tags", Adapt(am.RequireAuth(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		tagsHandler(w, req, meta, vr)
-	})))))
-	http.HandleFunc("/export", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		exportHandler(w, req, objPath, metaPath, vr)
-	})))))
-	http.HandleFunc("/import", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		importHandler(w, req, objPath, metaPath, vr)
-	})))))
-	// POST /capability issues a new capability. Other methods return 405.
-	// GET /capability (capability lookup by ID) is not currently implemented.
-	http.HandleFunc("/capability", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		issueHandler(w, req, cm.Key, meta, vr)
-	})))))
-	http.HandleFunc("/capability/revoke", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		revokeHandler(w, req, meta, cm.Revoked, vr)
-	})))))
-
-	http.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.Dir(uiPath))))
+	registerRoutes(store, meta, am, cm, rl, authClient, objPath, metaPath, uiPath)
 
 	log.Println("starting server on :8090")
 	if err := http.ListenAndServe(":8090", nil); err != nil {

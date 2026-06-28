@@ -21,6 +21,8 @@ import (
 
 // --- Test helpers ---
 
+var testKey = []byte("test-signing-key")
+
 // newTestEnv creates temp directories with a CAS store and metadata store.
 func newTestEnv(t *testing.T) (store *cas.Store, objPath, metaPath string, meta *metadata.Store) {
 	t.Helper()
@@ -74,21 +76,20 @@ func makeArchive(t *testing.T, source string) []byte {
 func stashOne(t *testing.T, store *cas.Store, meta *metadata.Store, content string) string {
 	t.Helper()
 
-	// Compute the hash the same way the store will so we can build a matching VR.
-	sum := md5.Sum([]byte(content))
-	hash := hex.EncodeToString(sum[:])
-	vr := VerifiedRequest{
-		Capability: metadata.CapabilityPayload{Hash: hash},
-		Principal:  "test-user",
-	}
+	vr := VerifiedRequest{Principal: "test-user"}
 
 	req := httptest.NewRequest(http.MethodPost, "/stash", strings.NewReader(content))
 	w := httptest.NewRecorder()
-	stashHandler(w, req, store, meta, vr)
+	stashHandler(w, req, store, meta, testKey, vr)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("stashOne failed: %d %s", w.Code, w.Body.String())
 	}
-	return strings.TrimSpace(w.Body.String())
+
+	var resp stashResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("stashOne: failed to decode response: %v", err)
+	}
+	return resp.Hash
 }
 
 // vrForHash returns a VerifiedRequest with the given hash and a test principal.
@@ -97,6 +98,11 @@ func vrForHash(hash string) VerifiedRequest {
 		Capability: metadata.CapabilityPayload{Hash: hash},
 		Principal:  "test-user",
 	}
+}
+
+// vrWithPrincipal returns a VerifiedRequest with just a principal set.
+func vrWithPrincipal() VerifiedRequest {
+	return VerifiedRequest{Principal: "test-user"}
 }
 
 // vrEmpty returns a zero-value VerifiedRequest for handlers that don't check hash.
@@ -110,19 +116,19 @@ func TestStashHandler_Success(t *testing.T) {
 	store, _, _, meta := newTestEnv(t)
 
 	content := "hello #world"
-	sum := md5.Sum([]byte(content))
-	hash := hex.EncodeToString(sum[:])
-
 	req := httptest.NewRequest(http.MethodPost, "/stash", strings.NewReader(content))
 	w := httptest.NewRecorder()
-	stashHandler(w, req, store, meta, vrForHash(hash))
+	stashHandler(w, req, store, meta, testKey, vrWithPrincipal())
 
 	if w.Code != http.StatusCreated {
 		t.Errorf("expected 201, got %d", w.Code)
 	}
-	got := strings.TrimSpace(w.Body.String())
-	if len(got) != 32 {
-		t.Errorf("expected 32-char hash, got %q", got)
+	var resp stashResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Errorf("expected valid JSON response, got error: %v", err)
+	}
+	if len(resp.Hash) != 32 {
+		t.Errorf("expected 32-char hash, got %q", resp.Hash)
 	}
 }
 
@@ -131,23 +137,10 @@ func TestStashHandler_WrongMethod(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/stash", nil)
 	w := httptest.NewRecorder()
-	stashHandler(w, req, store, meta, vrEmpty())
+	stashHandler(w, req, store, meta, testKey, vrEmpty())
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405, got %d", w.Code)
-	}
-}
-
-func TestStashHandler_WrongHash(t *testing.T) {
-	store, _, _, meta := newTestEnv(t)
-
-	// Capability covers a different hash than the content produces.
-	req := httptest.NewRequest(http.MethodPost, "/stash", strings.NewReader("hello #world"))
-	w := httptest.NewRecorder()
-	stashHandler(w, req, store, meta, vrForHash("wrong-hash"))
-
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected 403, got %d", w.Code)
 	}
 }
 
@@ -431,14 +424,17 @@ func TestCollectionHandler_Success(t *testing.T) {
 	body := `["aabbcc001122334455667788990011aa","bbccdd112233445566778899001122bb"]`
 	req := httptest.NewRequest(http.MethodPost, "/collection", strings.NewReader(body))
 	w := httptest.NewRecorder()
-	collectionHandler(w, req, store, meta, vrEmpty())
+	collectionHandler(w, req, store, meta, testKey, vrWithPrincipal())
 
 	if w.Code != http.StatusCreated {
 		t.Errorf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	hash := strings.TrimSpace(w.Body.String())
-	if len(hash) != 32 {
-		t.Errorf("expected 32-char hash, got %q", hash)
+	var resp stashResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Errorf("expected valid JSON response, got error: %v", err)
+	}
+	if len(resp.Hash) != 32 {
+		t.Errorf("expected 32-char hash, got %q", resp.Hash)
 	}
 }
 
@@ -447,7 +443,7 @@ func TestCollectionHandler_InvalidBody(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/collection", strings.NewReader("not json"))
 	w := httptest.NewRecorder()
-	collectionHandler(w, req, store, meta, vrEmpty())
+	collectionHandler(w, req, store, meta, testKey, vrEmpty())
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
@@ -461,26 +457,30 @@ func TestRelationHandler_Success(t *testing.T) {
 	from := stashOne(t, store, meta, "from object #source")
 	to := stashOne(t, store, meta, "to object #target")
 
-	req := httptest.NewRequest(http.MethodPost,
-		"/relation?from="+from+"&rel=contextualizes&to="+to, nil)
+	body := `{"from":"` + from + `","rel":"contextualizes","to":"` + to + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/relation", strings.NewReader(body))
 	w := httptest.NewRecorder()
-	relationHandler(w, req, store, meta, vrEmpty())
+	relationHandler(w, req, store, meta, testKey, vrWithPrincipal())
 
 	if w.Code != http.StatusCreated {
 		t.Errorf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	hash := strings.TrimSpace(w.Body.String())
-	if len(hash) != 32 {
-		t.Errorf("expected 32-char hash, got %q", hash)
+	var resp stashResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Errorf("expected valid JSON response, got error: %v", err)
+	}
+	if len(resp.Hash) != 32 {
+		t.Errorf("expected 32-char hash, got %q", resp.Hash)
 	}
 }
 
 func TestRelationHandler_MissingParams(t *testing.T) {
 	store, _, _, meta := newTestEnv(t)
 
-	req := httptest.NewRequest(http.MethodPost, "/relation?from=abc&rel=contextualizes", nil)
+	body := `{"from":"abc","rel":"contextualizes"}`
+	req := httptest.NewRequest(http.MethodPost, "/relation", strings.NewReader(body))
 	w := httptest.NewRecorder()
-	relationHandler(w, req, store, meta, vrEmpty())
+	relationHandler(w, req, store, meta, testKey, vrEmpty())
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
@@ -492,7 +492,7 @@ func TestRelationHandler_WrongMethod(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/relation", nil)
 	w := httptest.NewRecorder()
-	relationHandler(w, req, store, meta, vrEmpty())
+	relationHandler(w, req, store, meta, testKey, vrEmpty())
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405, got %d", w.Code)
@@ -524,10 +524,10 @@ func TestRelationsHandler_WithRelations(t *testing.T) {
 	from := stashOne(t, store, meta, "from object")
 	to := stashOne(t, store, meta, "to object")
 
-	relReq := httptest.NewRequest(http.MethodPost,
-		"/relation?from="+from+"&rel=contextualizes&to="+to, nil)
+	body := `{"from":"` + from + `","rel":"contextualizes","to":"` + to + `"}`
+	relReq := httptest.NewRequest(http.MethodPost, "/relation", strings.NewReader(body))
 	relW := httptest.NewRecorder()
-	relationHandler(relW, relReq, store, meta, vrEmpty())
+	relationHandler(relW, relReq, store, meta, testKey, vrWithPrincipal())
 
 	req := httptest.NewRequest(http.MethodGet, "/relations?hash="+from, nil)
 	w := httptest.NewRecorder()
