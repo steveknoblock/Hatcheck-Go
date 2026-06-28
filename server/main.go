@@ -50,7 +50,7 @@ func stashAndIssue(
 	}
 
 	expires := time.Now().UTC().Add(capabilityExpiry)
-	cap := metadata.SignCapability(key, hash, PermRead, principal, email, expires)
+	cap := metadata.SignCapability(key, hash, PermWrite, principal, email, expires)
 	if err := meta.AppendCapability(cap); err != nil {
 		log.Printf("warning: failed to record capability for %s: %v", hash, err)
 	}
@@ -229,8 +229,8 @@ func nameHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store,
 	label := req.URL.Query().Get("label")
 	hash := req.URL.Query().Get("hash")
 
-	if label == "" || hash == "" {
-		http.Error(w, "missing label or hash parameter", http.StatusBadRequest)
+	if namespace == "" || label == "" || hash == "" {
+		http.Error(w, "missing namespace, label, or hash parameter", http.StatusBadRequest)
 		return
 	}
 
@@ -241,11 +241,7 @@ func nameHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store,
 		return
 	}
 
-	// Prepend namespace if provided.
-	fullLabel := label
-	if namespace != "" {
-		fullLabel = namespace + "/" + label
-	}
+	fullLabel := namespace + "/" + label
 
 	// Try to create the name. If it already exists, update it instead.
 	err := meta.AppendNameCreate(fullLabel, hash)

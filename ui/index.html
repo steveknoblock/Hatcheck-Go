@@ -1007,6 +1007,8 @@ function clearAuth() {
     sessionStorage.removeItem('user_id');
     sessionStorage.removeItem('capability_token');
     sessionStorage.removeItem('browse_cap_token');
+    sessionStorage.removeItem('namespace');
+    namespace = '';
     updateAuthUI();
 }
 
@@ -1084,6 +1086,7 @@ async function handleMagicLinkCallback() {
 // elements it references don't exist yet when the script first executes.
 document.addEventListener('DOMContentLoaded', () => {
     handleMagicLinkCallback().then(updateAuthUI);
+    if (namespace) document.getElementById('ns-input').value = namespace;
 });
 
 // Load capability for a specific hash from sessionStorage.
@@ -1103,7 +1106,7 @@ function loadCapabilityForHash(hash) {
 }
 
 // ── State ──
-let namespace  = '';
+let namespace  = sessionStorage.getItem('namespace') || '';
 let nameList   = []; // [{label, hash}]
 
 // Navigation path stack.
@@ -1207,6 +1210,7 @@ function onNsBlur() {
 async function loadNamespace() {
     namespace = document.getElementById('ns-input').value.trim();
     if (!namespace) return;
+    sessionStorage.setItem('namespace', namespace);
 
     pathStack    = [];
     currentHash  = null;
