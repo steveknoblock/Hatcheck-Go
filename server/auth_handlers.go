@@ -50,7 +50,7 @@ func loginHandler(w http.ResponseWriter, req *http.Request, authClient *auth.Cli
 // capability for the authenticated user, and redirects to the UI with both.
 //
 // GET /auth/authenticate?token=<stytch_token>
-func authenticateHandler(w http.ResponseWriter, req *http.Request, authClient *auth.Client, meta *metadata.Store, key []byte) {
+func authenticateHandler(w http.ResponseWriter, req *http.Request, authClient *auth.Client, meta *metadata.Store, key []byte, cfg Config) {
 	if req.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -72,7 +72,7 @@ func authenticateHandler(w http.ResponseWriter, req *http.Request, authClient *a
 	// Issue a wildcard read capability for this user. This allows them to
 	// read any object in the CAS without needing a per-object capability.
 	// Write and admin operations still require a specific capability.
-	expires := time.Now().UTC().Add(capabilityExpiry)
+	expires := time.Now().UTC().Add(cfg.CapabilityExpiry)
 	readCap := metadata.SignCapability(key, "*", PermRead, identity.UserID, identity.Email, expires)
 	if err := meta.AppendCapability(readCap); err != nil {
 		log.Printf("warning: failed to record read capability for %s: %v", identity.UserID, err)

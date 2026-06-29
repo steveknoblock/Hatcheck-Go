@@ -18,9 +18,7 @@ func registerRoutes(
 	cm *CapabilityMiddleware,
 	rl *RateLimiters,
 	authClient *auth.Client,
-	objPath string,
-	metaPath string,
-	uiPath string,
+	cfg Config,
 ) {
 	// Auth routes — not capability protected, but also not JWT protected
 	// since these are the routes that establish identity in the first place.
@@ -28,7 +26,7 @@ func registerRoutes(
 		loginHandler(w, req, authClient)
 	})
 	http.HandleFunc("/auth/authenticate", func(w http.ResponseWriter, req *http.Request) {
-		authenticateHandler(w, req, authClient, meta, cm.Key)
+		authenticateHandler(w, req, authClient, meta, cm.Key, cfg)
 	})
 	http.HandleFunc("/auth/logout", logoutHandler)
 
@@ -36,7 +34,7 @@ func registerRoutes(
 	// capability for the resulting hash automatically, making stash the
 	// ownership creation point.
 	http.HandleFunc("/stash", Adapt(am.RequireAuth(rl.Write.Limit(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		stashHandler(w, req, store, meta, cm.Key, vr)
+		stashHandler(w, req, store, meta, cm.Key, cfg, vr)
 	}))))
 	http.HandleFunc("/fetch", Adapt(am.RequireAuth(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		fetchHandler(w, req, store, vr)
@@ -57,10 +55,10 @@ func registerRoutes(
 		nameHandler(w, req, meta, vr)
 	})))))
 	http.HandleFunc("/collection", Adapt(am.RequireAuth(rl.Write.Limit(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		collectionHandler(w, req, store, meta, cm.Key, vr)
+		collectionHandler(w, req, store, meta, cm.Key, cfg, vr)
 	}))))
 	http.HandleFunc("/relation", Adapt(am.RequireAuth(rl.Write.Limit(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		relationHandler(w, req, store, meta, cm.Key, vr)
+		relationHandler(w, req, store, meta, cm.Key, cfg, vr)
 	}))))
 	http.HandleFunc("/relations", Adapt(am.RequireAuth(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		relationsHandler(w, req, meta, vr)
@@ -69,10 +67,10 @@ func registerRoutes(
 		tagsHandler(w, req, meta, vr)
 	})))))
 	http.HandleFunc("/export", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		exportHandler(w, req, objPath, metaPath, vr)
+		exportHandler(w, req, cfg.ObjPath, cfg.MetaPath, vr)
 	})))))
 	http.HandleFunc("/import", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		importHandler(w, req, objPath, metaPath, vr)
+		importHandler(w, req, cfg.ObjPath, cfg.MetaPath, vr)
 	})))))
 	// POST /capability issues a new capability. Other methods return 405.
 	// GET /capability (capability lookup by ID) is not currently implemented.
@@ -83,5 +81,5 @@ func registerRoutes(
 		revokeHandler(w, req, meta, cm.Revoked, vr)
 	})))))
 
-	http.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.Dir(uiPath))))
+	http.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.Dir(cfg.UIPath))))
 }

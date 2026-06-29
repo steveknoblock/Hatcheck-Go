@@ -45,6 +45,12 @@ type CollectionPayload struct {
 	Hashes []string `json:"hashes"`
 }
 
+type ContextPayload struct {
+	Hash        string   `json:"hash"`
+	ShiftedFrom string   `json:"shifted_from"`
+	Hashes      []string `json:"hashes"`
+}
+
 type RelationPayload struct {
 	Hash string `json:"hash"`
 	From string `json:"from"`
