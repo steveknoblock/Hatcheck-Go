@@ -24,9 +24,6 @@ const (
 	PermAdmin = "admin"
 )
 
-// capabilityExpiry is the lifetime of capabilities issued on object creation.
-const capabilityExpiry = 365 * 24 * time.Hour
-
 // stashAndIssue stores content in the CAS, records it in the metadata log,
 // issues a bound write capability for the resulting hash tied to the
 // creating principal, and returns both the hash and the capability.
@@ -38,6 +35,7 @@ func stashAndIssue(
 	content string,
 	principal string,
 	email string,
+	expiry time.Duration,
 	appendMeta func(hash string) error,
 ) (string, metadata.CapabilityPayload, error) {
 	hash, err := store.Stash(content)
@@ -49,7 +47,7 @@ func stashAndIssue(
 		log.Printf("warning: failed to append metadata for %s: %v", hash, err)
 	}
 
-	expires := time.Now().UTC().Add(capabilityExpiry)
+	expires := time.Now().UTC().Add(expiry)
 	cap := metadata.SignCapability(key, hash, PermWrite, principal, email, expires)
 	if err := meta.AppendCapability(cap); err != nil {
 		log.Printf("warning: failed to record capability for %s: %v", hash, err)
@@ -64,7 +62,7 @@ type stashResponse struct {
 	Capability metadata.CapabilityPayload `json:"capability"`
 }
 
-func stashHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, key []byte, vr VerifiedRequest) {
+func stashHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, key []byte, cfg Config, vr VerifiedRequest) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -79,7 +77,7 @@ func stashHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, me
 
 	content := string(body)
 
-	hash, cap, err := stashAndIssue(store, meta, key, content, vr.Principal, vr.Email,
+	hash, cap, err := stashAndIssue(store, meta, key, content, vr.Principal, vr.Email, cfg.CapabilityExpiry,
 		func(hash string) error {
 			return meta.AppendStash(hash, len(body), content)
 		},
@@ -260,7 +258,7 @@ func nameHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store,
 // collectionHandler stores a JSON array of hashes as a CAS object,
 // records it in metadata, issues a write capability, and returns both.
 // POST /collection — body is a JSON array of hashes
-func collectionHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, key []byte, vr VerifiedRequest) {
+func collectionHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, key []byte, cfg Config, vr VerifiedRequest) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -281,7 +279,7 @@ func collectionHandler(w http.ResponseWriter, req *http.Request, store *cas.Stor
 
 	content := string(body)
 
-	hash, cap, err := stashAndIssue(store, meta, key, content, vr.Principal, vr.Email,
+	hash, cap, err := stashAndIssue(store, meta, key, content, vr.Principal, vr.Email, cfg.CapabilityExpiry,
 		func(hash string) error {
 			return meta.AppendCollection(hash, hashes)
 		},
@@ -300,7 +298,7 @@ func collectionHandler(w http.ResponseWriter, req *http.Request, store *cas.Stor
 // relationHandler stores a typed link between two hashes as a CAS object,
 // records it in metadata, issues a write capability, and returns both.
 // POST /relation — body is JSON {"from":"<hash>","rel":"<type>","to":"<hash>"}
-func relationHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, key []byte, vr VerifiedRequest) {
+func relationHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, key []byte, cfg Config, vr VerifiedRequest) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -326,7 +324,7 @@ func relationHandler(w http.ResponseWriter, req *http.Request, store *cas.Store,
 
 	content := string(body)
 
-	hash, cap, err := stashAndIssue(store, meta, key, content, vr.Principal, vr.Email,
+	hash, cap, err := stashAndIssue(store, meta, key, content, vr.Principal, vr.Email, cfg.CapabilityExpiry,
 		func(hash string) error {
 			return meta.AppendRelation(hash, rel.From, rel.Rel, rel.To)
 		},
@@ -545,28 +543,10 @@ func revokeHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Stor
 }
 
 func main() {
-	objPath := os.Getenv("HATCHECK_DATA")
-	if objPath == "" {
-		objPath = "./objects"
-	}
-
-	uiPath := os.Getenv("HATCHECK_UI")
-	if uiPath == "" {
-		uiPath = "./ui"
-	}
-
-	metaPath := os.Getenv("HATCHECK_META")
-	if metaPath == "" {
-		metaPath = "./metadata"
-	}
-
-	signingKey := []byte(os.Getenv("HATCHECK_SIGNING_KEY"))
-	if len(signingKey) == 0 {
-		log.Fatal("HATCHECK_SIGNING_KEY environment variable must be set")
-	}
+	cfg := LoadConfig()
 
 	// Initialise the CAS with an MD5 hash function.
-	store, err := cas.New(objPath, func(content string) string {
+	store, err := cas.New(cfg.ObjPath, func(content string) string {
 		sum := md5.Sum([]byte(content))
 		return hex.EncodeToString(sum[:])
 	})
@@ -574,7 +554,7 @@ func main() {
 		log.Fatalf("failed to initialise object store: %v", err)
 	}
 
-	meta, err := metadata.New(metaPath,
+	meta, err := metadata.New(cfg.MetaPath,
 		metadata.NewTagIndex(),
 		metadata.NewDateIndex(),
 		metadata.NewNameIndex(),
@@ -591,9 +571,9 @@ func main() {
 	}
 
 	cm := &CapabilityMiddleware{
-		Key:            signingKey,
+		Key:            cfg.SigningKey,
 		Revoked:        revoked,
-		BootstrapToken: os.Getenv("HATCHECK_BOOTSTRAP_TOKEN"),
+		BootstrapToken: cfg.BootstrapToken,
 	}
 
 	// Initialise the Stytch auth client.
@@ -603,9 +583,9 @@ func main() {
 	}
 
 	am := &AuthMiddleware{Client: authClient}
-	rl := NewRateLimiters()
+	rl := NewRateLimiters(cfg)
 
-	registerRoutes(store, meta, am, cm, rl, authClient, objPath, metaPath, uiPath)
+	registerRoutes(store, meta, am, cm, rl, authClient, cfg)
 
 	log.Println("starting server on :8090")
 	if err := http.ListenAndServe(":8090", nil); err != nil {
