@@ -21,6 +21,8 @@ import (
 
 // --- Test helpers ---
 
+var testKey = []byte("test-signing-key")
+
 // newTestEnv creates temp directories with a CAS store and metadata store.
 func newTestEnv(t *testing.T) (store *cas.Store, objPath, metaPath string, meta *metadata.Store) {
 	t.Helper()
@@ -73,13 +75,39 @@ func makeArchive(t *testing.T, source string) []byte {
 // stashOne is a test helper that stashes content and returns the hash.
 func stashOne(t *testing.T, store *cas.Store, meta *metadata.Store, content string) string {
 	t.Helper()
+
+	vr := VerifiedRequest{Principal: "test-user"}
+
 	req := httptest.NewRequest(http.MethodPost, "/stash", strings.NewReader(content))
 	w := httptest.NewRecorder()
-	stashHandler(w, req, store, meta)
+	stashHandler(w, req, store, meta, testKey, vr)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("stashOne failed: %d %s", w.Code, w.Body.String())
 	}
-	return strings.TrimSpace(w.Body.String())
+
+	var resp stashResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("stashOne: failed to decode response: %v", err)
+	}
+	return resp.Hash
+}
+
+// vrForHash returns a VerifiedRequest with the given hash and a test principal.
+func vrForHash(hash string) VerifiedRequest {
+	return VerifiedRequest{
+		Capability: metadata.CapabilityPayload{Hash: hash},
+		Principal:  "test-user",
+	}
+}
+
+// vrWithPrincipal returns a VerifiedRequest with just a principal set.
+func vrWithPrincipal() VerifiedRequest {
+	return VerifiedRequest{Principal: "test-user"}
+}
+
+// vrEmpty returns a zero-value VerifiedRequest for handlers that don't check hash.
+func vrEmpty() VerifiedRequest {
+	return VerifiedRequest{}
 }
 
 // --- stashHandler ---
@@ -87,16 +115,20 @@ func stashOne(t *testing.T, store *cas.Store, meta *metadata.Store, content stri
 func TestStashHandler_Success(t *testing.T) {
 	store, _, _, meta := newTestEnv(t)
 
-	req := httptest.NewRequest(http.MethodPost, "/stash", strings.NewReader("hello #world"))
+	content := "hello #world"
+	req := httptest.NewRequest(http.MethodPost, "/stash", strings.NewReader(content))
 	w := httptest.NewRecorder()
-	stashHandler(w, req, store, meta)
+	stashHandler(w, req, store, meta, testKey, vrWithPrincipal())
 
 	if w.Code != http.StatusCreated {
 		t.Errorf("expected 201, got %d", w.Code)
 	}
-	hash := strings.TrimSpace(w.Body.String())
-	if len(hash) != 32 {
-		t.Errorf("expected 32-char hash, got %q", hash)
+	var resp stashResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Errorf("expected valid JSON response, got error: %v", err)
+	}
+	if len(resp.Hash) != 32 {
+		t.Errorf("expected 32-char hash, got %q", resp.Hash)
 	}
 }
 
@@ -105,7 +137,7 @@ func TestStashHandler_WrongMethod(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/stash", nil)
 	w := httptest.NewRecorder()
-	stashHandler(w, req, store, meta)
+	stashHandler(w, req, store, meta, testKey, vrEmpty())
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405, got %d", w.Code)
@@ -120,7 +152,7 @@ func TestFetchHandler_Success(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/fetch?hash="+hash, nil)
 	w := httptest.NewRecorder()
-	fetchHandler(w, req, store)
+	fetchHandler(w, req, store, vrForHash(hash))
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
@@ -135,7 +167,7 @@ func TestFetchHandler_MissingHash(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/fetch", nil)
 	w := httptest.NewRecorder()
-	fetchHandler(w, req, store)
+	fetchHandler(w, req, store, vrEmpty())
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
@@ -144,13 +176,28 @@ func TestFetchHandler_MissingHash(t *testing.T) {
 
 func TestFetchHandler_NotFound(t *testing.T) {
 	store, _, _, _ := newTestEnv(t)
+	hash := "aabbccddeeff00112233445566778899"
 
-	req := httptest.NewRequest(http.MethodGet, "/fetch?hash=aabbccddeeff00112233445566778899", nil)
+	req := httptest.NewRequest(http.MethodGet, "/fetch?hash="+hash, nil)
 	w := httptest.NewRecorder()
-	fetchHandler(w, req, store)
+	fetchHandler(w, req, store, vrForHash(hash))
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestFetchHandler_WrongHash(t *testing.T) {
+	store, _, _, meta := newTestEnv(t)
+	hash := stashOne(t, store, meta, "fetch me")
+
+	// Request asks for hash but capability covers a different one.
+	req := httptest.NewRequest(http.MethodGet, "/fetch?hash="+hash, nil)
+	w := httptest.NewRecorder()
+	fetchHandler(w, req, store, vrForHash("different-hash"))
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", w.Code)
 	}
 }
 
@@ -161,7 +208,7 @@ func TestListHandler_EmptyStore(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/list", nil)
 	w := httptest.NewRecorder()
-	listHandler(w, req, store, meta)
+	listHandler(w, req, store, meta, vrEmpty())
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
@@ -179,7 +226,7 @@ func TestListHandler_WithObjects(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/list", nil)
 	w := httptest.NewRecorder()
-	listHandler(w, req, store, meta)
+	listHandler(w, req, store, meta, vrEmpty())
 
 	var result []map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &result)
@@ -199,7 +246,7 @@ func TestQueryHandler_ByTag(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/query?index=tag&key=ideas", nil)
 	w := httptest.NewRecorder()
-	queryHandler(w, req, meta)
+	queryHandler(w, req, meta, vrEmpty())
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
@@ -216,7 +263,7 @@ func TestQueryHandler_MissingParams(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/query?index=tag", nil)
 	w := httptest.NewRecorder()
-	queryHandler(w, req, meta)
+	queryHandler(w, req, meta, vrEmpty())
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
@@ -230,7 +277,7 @@ func TestNamespacesHandler_Empty(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/namespaces", nil)
 	w := httptest.NewRecorder()
-	namespacesHandler(w, req, meta)
+	namespacesHandler(w, req, meta, vrEmpty())
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
@@ -249,7 +296,7 @@ func TestNamespacesHandler_WithNames(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/namespaces", nil)
 	w := httptest.NewRecorder()
-	namespacesHandler(w, req, meta)
+	namespacesHandler(w, req, meta, vrEmpty())
 
 	var result []string
 	json.Unmarshal(w.Body.Bytes(), &result)
@@ -265,7 +312,7 @@ func TestNamesHandler_MissingNamespace(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/names", nil)
 	w := httptest.NewRecorder()
-	namesHandler(w, req, meta)
+	namesHandler(w, req, meta, vrEmpty())
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
@@ -280,7 +327,7 @@ func TestNamesHandler_ReturnsNamesInNamespace(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/names?namespace=bob", nil)
 	w := httptest.NewRecorder()
-	namesHandler(w, req, meta)
+	namesHandler(w, req, meta, vrEmpty())
 
 	var result []metadata.NameEntry
 	json.Unmarshal(w.Body.Bytes(), &result)
@@ -295,7 +342,7 @@ func TestNamesHandler_PrefixStripped(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/names?namespace=bob", nil)
 	w := httptest.NewRecorder()
-	namesHandler(w, req, meta)
+	namesHandler(w, req, meta, vrEmpty())
 
 	var result []metadata.NameEntry
 	json.Unmarshal(w.Body.Bytes(), &result)
@@ -308,11 +355,12 @@ func TestNamesHandler_PrefixStripped(t *testing.T) {
 
 func TestNameHandler_CreateNew(t *testing.T) {
 	_, _, _, meta := newTestEnv(t)
+	hash := "aabbcc001122334455667788990011aa"
 
 	req := httptest.NewRequest(http.MethodPost,
-		"/name?namespace=bob&label=my-doc&hash=aabbcc001122334455667788990011aa", nil)
+		"/name?namespace=bob&label=my-doc&hash="+hash, nil)
 	w := httptest.NewRecorder()
-	nameHandler(w, req, meta)
+	nameHandler(w, req, meta, vrForHash(hash))
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
@@ -324,19 +372,20 @@ func TestNameHandler_CreateNew(t *testing.T) {
 
 func TestNameHandler_UpdateExisting(t *testing.T) {
 	_, _, _, meta := newTestEnv(t)
+	hash := "bbccdd112233445566778899001122bb"
 	meta.AppendNameCreate("bob/my-doc", "aabbcc001122334455667788990011aa")
 
 	req := httptest.NewRequest(http.MethodPost,
-		"/name?namespace=bob&label=my-doc&hash=bbccdd112233445566778899001122bb", nil)
+		"/name?namespace=bob&label=my-doc&hash="+hash, nil)
 	w := httptest.NewRecorder()
-	nameHandler(w, req, meta)
+	nameHandler(w, req, meta, vrForHash(hash))
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
 	}
 
 	results := meta.Query("name", "bob/my-doc")
-	if len(results) != 1 || results[0] != "bbccdd112233445566778899001122bb" {
+	if len(results) != 1 || results[0] != hash {
 		t.Errorf("expected updated hash, got %v", results)
 	}
 }
@@ -346,10 +395,24 @@ func TestNameHandler_MissingParams(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/name?label=my-doc", nil)
 	w := httptest.NewRecorder()
-	nameHandler(w, req, meta)
+	nameHandler(w, req, meta, vrEmpty())
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestNameHandler_WrongHash(t *testing.T) {
+	_, _, _, meta := newTestEnv(t)
+	hash := "aabbcc001122334455667788990011aa"
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/name?namespace=bob&label=my-doc&hash="+hash, nil)
+	w := httptest.NewRecorder()
+	nameHandler(w, req, meta, vrForHash("different-hash"))
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("expected 403, got %d", w.Code)
 	}
 }
 
@@ -361,14 +424,17 @@ func TestCollectionHandler_Success(t *testing.T) {
 	body := `["aabbcc001122334455667788990011aa","bbccdd112233445566778899001122bb"]`
 	req := httptest.NewRequest(http.MethodPost, "/collection", strings.NewReader(body))
 	w := httptest.NewRecorder()
-	collectionHandler(w, req, store, meta)
+	collectionHandler(w, req, store, meta, testKey, vrWithPrincipal())
 
 	if w.Code != http.StatusCreated {
 		t.Errorf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	hash := strings.TrimSpace(w.Body.String())
-	if len(hash) != 32 {
-		t.Errorf("expected 32-char hash, got %q", hash)
+	var resp stashResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Errorf("expected valid JSON response, got error: %v", err)
+	}
+	if len(resp.Hash) != 32 {
+		t.Errorf("expected 32-char hash, got %q", resp.Hash)
 	}
 }
 
@@ -377,7 +443,7 @@ func TestCollectionHandler_InvalidBody(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/collection", strings.NewReader("not json"))
 	w := httptest.NewRecorder()
-	collectionHandler(w, req, store, meta)
+	collectionHandler(w, req, store, meta, testKey, vrEmpty())
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
@@ -391,26 +457,30 @@ func TestRelationHandler_Success(t *testing.T) {
 	from := stashOne(t, store, meta, "from object #source")
 	to := stashOne(t, store, meta, "to object #target")
 
-	req := httptest.NewRequest(http.MethodPost,
-		"/relation?from="+from+"&rel=contextualizes&to="+to, nil)
+	body := `{"from":"` + from + `","rel":"contextualizes","to":"` + to + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/relation", strings.NewReader(body))
 	w := httptest.NewRecorder()
-	relationHandler(w, req, store, meta)
+	relationHandler(w, req, store, meta, testKey, vrWithPrincipal())
 
 	if w.Code != http.StatusCreated {
 		t.Errorf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	hash := strings.TrimSpace(w.Body.String())
-	if len(hash) != 32 {
-		t.Errorf("expected 32-char hash, got %q", hash)
+	var resp stashResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Errorf("expected valid JSON response, got error: %v", err)
+	}
+	if len(resp.Hash) != 32 {
+		t.Errorf("expected 32-char hash, got %q", resp.Hash)
 	}
 }
 
 func TestRelationHandler_MissingParams(t *testing.T) {
 	store, _, _, meta := newTestEnv(t)
 
-	req := httptest.NewRequest(http.MethodPost, "/relation?from=abc&rel=contextualizes", nil)
+	body := `{"from":"abc","rel":"contextualizes"}`
+	req := httptest.NewRequest(http.MethodPost, "/relation", strings.NewReader(body))
 	w := httptest.NewRecorder()
-	relationHandler(w, req, store, meta)
+	relationHandler(w, req, store, meta, testKey, vrEmpty())
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
@@ -422,7 +492,7 @@ func TestRelationHandler_WrongMethod(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/relation", nil)
 	w := httptest.NewRecorder()
-	relationHandler(w, req, store, meta)
+	relationHandler(w, req, store, meta, testKey, vrEmpty())
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405, got %d", w.Code)
@@ -437,7 +507,7 @@ func TestRelationsHandler_NoRelations(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/relations?hash="+hash, nil)
 	w := httptest.NewRecorder()
-	relationsHandler(w, req, meta)
+	relationsHandler(w, req, meta, vrEmpty())
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
@@ -454,16 +524,14 @@ func TestRelationsHandler_WithRelations(t *testing.T) {
 	from := stashOne(t, store, meta, "from object")
 	to := stashOne(t, store, meta, "to object")
 
-	// Create a relation.
-	relReq := httptest.NewRequest(http.MethodPost,
-		"/relation?from="+from+"&rel=contextualizes&to="+to, nil)
+	body := `{"from":"` + from + `","rel":"contextualizes","to":"` + to + `"}`
+	relReq := httptest.NewRequest(http.MethodPost, "/relation", strings.NewReader(body))
 	relW := httptest.NewRecorder()
-	relationHandler(relW, relReq, store, meta)
+	relationHandler(relW, relReq, store, meta, testKey, vrWithPrincipal())
 
-	// Query outgoing from "from" object.
 	req := httptest.NewRequest(http.MethodGet, "/relations?hash="+from, nil)
 	w := httptest.NewRecorder()
-	relationsHandler(w, req, meta)
+	relationsHandler(w, req, meta, vrEmpty())
 
 	var result map[string][]metadata.RelationPayload
 	json.Unmarshal(w.Body.Bytes(), &result)
@@ -474,10 +542,9 @@ func TestRelationsHandler_WithRelations(t *testing.T) {
 		t.Errorf("expected rel 'contextualizes', got %q", result["outgoing"][0].Rel)
 	}
 
-	// Query incoming from "to" object.
 	req2 := httptest.NewRequest(http.MethodGet, "/relations?hash="+to, nil)
 	w2 := httptest.NewRecorder()
-	relationsHandler(w2, req2, meta)
+	relationsHandler(w2, req2, meta, vrEmpty())
 
 	var result2 map[string][]metadata.RelationPayload
 	json.Unmarshal(w2.Body.Bytes(), &result2)
@@ -491,7 +558,7 @@ func TestRelationsHandler_MissingHash(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/relations", nil)
 	w := httptest.NewRecorder()
-	relationsHandler(w, req, meta)
+	relationsHandler(w, req, meta, vrEmpty())
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
@@ -505,7 +572,7 @@ func TestTagsHandler_Empty(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/tags", nil)
 	w := httptest.NewRecorder()
-	tagsHandler(w, req, meta)
+	tagsHandler(w, req, meta, vrEmpty())
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
@@ -523,7 +590,7 @@ func TestTagsHandler_WithTags(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/tags", nil)
 	w := httptest.NewRecorder()
-	tagsHandler(w, req, meta)
+	tagsHandler(w, req, meta, vrEmpty())
 
 	var result []string
 	json.Unmarshal(w.Body.Bytes(), &result)
@@ -537,7 +604,7 @@ func TestTagsHandler_WrongMethod(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/tags", nil)
 	w := httptest.NewRecorder()
-	tagsHandler(w, req, meta)
+	tagsHandler(w, req, meta, vrEmpty())
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405, got %d", w.Code)
@@ -551,7 +618,7 @@ func TestExportHandler_MissingSource(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/export", nil)
 	w := httptest.NewRecorder()
-	exportHandler(w, req, objPath, metaPath)
+	exportHandler(w, req, objPath, metaPath, vrEmpty())
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", w.Code)
@@ -563,7 +630,7 @@ func TestExportHandler_ReturnsGzip(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/export?source=bob", nil)
 	w := httptest.NewRecorder()
-	exportHandler(w, req, objPath, metaPath)
+	exportHandler(w, req, objPath, metaPath, vrEmpty())
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
@@ -579,7 +646,7 @@ func TestExportHandler_WrongMethod(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/export?source=bob", nil)
 	w := httptest.NewRecorder()
-	exportHandler(w, req, objPath, metaPath)
+	exportHandler(w, req, objPath, metaPath, vrEmpty())
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405, got %d", w.Code)
@@ -594,7 +661,7 @@ func TestImportHandler_Success(t *testing.T) {
 	archive := makeArchive(t, "bob")
 	req := httptest.NewRequest(http.MethodPost, "/import", bytes.NewReader(archive))
 	w := httptest.NewRecorder()
-	importHandler(w, req, objPath, metaPath)
+	importHandler(w, req, objPath, metaPath, vrEmpty())
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
@@ -609,7 +676,7 @@ func TestImportHandler_WrongMethod(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/import", nil)
 	w := httptest.NewRecorder()
-	importHandler(w, req, objPath, metaPath)
+	importHandler(w, req, objPath, metaPath, vrEmpty())
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405, got %d", w.Code)
@@ -621,7 +688,7 @@ func TestImportHandler_InvalidArchive(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/import", strings.NewReader("not a tar.gz"))
 	w := httptest.NewRecorder()
-	importHandler(w, req, objPath, metaPath)
+	importHandler(w, req, objPath, metaPath, vrEmpty())
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("expected 500, got %d", w.Code)
@@ -631,31 +698,27 @@ func TestImportHandler_InvalidArchive(t *testing.T) {
 func TestImportExportRoundTrip(t *testing.T) {
 	store, objPath, metaPath, meta := newTestEnv(t)
 
-	// Stash an object and name it.
 	hash := stashOne(t, store, meta, "round trip content")
 
 	nameReq := httptest.NewRequest(http.MethodPost,
 		"/name?namespace=bob&label=roundtrip&hash="+hash, nil)
 	nameW := httptest.NewRecorder()
-	nameHandler(nameW, nameReq, meta)
+	nameHandler(nameW, nameReq, meta, vrForHash(hash))
 
-	// Export.
 	exportReq := httptest.NewRequest(http.MethodGet, "/export?source=bob", nil)
 	exportW := httptest.NewRecorder()
-	exportHandler(exportW, exportReq, objPath, metaPath)
+	exportHandler(exportW, exportReq, objPath, metaPath, vrEmpty())
 
-	// Import into a fresh environment.
 	_, objPath2, metaPath2, _ := newTestEnv(t)
 	importReq := httptest.NewRequest(http.MethodPost, "/import",
 		bytes.NewReader(exportW.Body.Bytes()))
 	importW := httptest.NewRecorder()
-	importHandler(importW, importReq, objPath2, metaPath2)
+	importHandler(importW, importReq, objPath2, metaPath2, vrEmpty())
 
 	if importW.Code != http.StatusOK {
 		t.Fatalf("import failed: %s", importW.Body.String())
 	}
 
-	// Verify object exists in destination.
 	shard := hash[0:2]
 	file := hash[2:]
 	if _, err := os.Stat(filepath.Join(objPath2, shard, file)); err != nil {
