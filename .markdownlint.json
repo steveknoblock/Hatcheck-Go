@@ -1,0 +1,4 @@
+{
+	"extends": "markdownlint-config",
+		"allow_different_nesting": true
+}
