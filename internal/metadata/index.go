@@ -27,6 +27,17 @@ type TagLister interface {
 	Tags() []string
 }
 
+// CapabilityQuerier is implemented by indexes that support rich capability
+// queries: lookup by principal, full enumeration, lookup by ID, and listing
+// distinct principals. Bundled into one interface because Store's
+// capability-listing methods always need the same underlying index.
+type CapabilityQuerier interface {
+	QueryRich(key string) []CapabilityPayload
+	All() []CapabilityPayload
+	ByID(id string) (CapabilityPayload, bool)
+	Principals() []string
+}
+
 // --- Helpers ---
 
 func appendUnique(slice []string, val string) []string {
