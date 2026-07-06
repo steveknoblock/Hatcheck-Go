@@ -1,6 +1,6 @@
 module github.com/steveknoblock/hatcheck-go
 
-go 1.21.6
+go 1.25.0
 
 require github.com/stytchauth/stytch-go/v18 v18.0.0
 
