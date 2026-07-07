@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hatcheck — Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="http://fonts.googleapis.com/css?family=Lato|Lora|Inconsolata" rel="stylesheet">
+<style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+        --bg:          #eeeeee;
+        --surface:     #e4e4e4;
+        --surface2:    #d8d8d8;
+        --border:      #cccccc;
+        --accent:      #3377aa;
+        --accent-dim:  #255580;
+        --text:        #000000;
+        --text-dim:    #666666;
+        --text-muted:  #999999;
+        --danger:      #cc3333;
+        --danger-dim:  #a32828;
+        --collection:  #2277bb;
+        --relation:    #996622;
+        --mono:        'Inconsolata', monospace;
+        --sans:        'Lato', sans-serif;
+        --serif:       'Lora', serif;
+    }
+
+    html, body { min-height: 100%; background: var(--bg); color: var(--text); font-family: var(--sans); }
+    body { display: flex; flex-direction: column; }
+
+    /* ── Header ── */
+    header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 24px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+    }
+    header h1 {
+        font-family: var(--serif);
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: -0.3px;
+    }
+    header h1 span { color: var(--accent); }
+    .header-right { display: flex; align-items: center; gap: 14px; }
+    .header-link {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text-dim);
+        text-decoration: none;
+        border-bottom: 1px solid transparent;
+        transition: all 0.15s;
+    }
+    .header-link:hover { color: var(--accent); border-bottom-color: var(--accent); }
+
+    /* ── Login overlay (shared convention with ui/index.html) ── */
+    .login-overlay {
+        position: fixed; inset: 0; background: var(--bg);
+        display: flex; align-items: center; justify-content: center; z-index: 1000;
+    }
+    .login-overlay.hidden { display: none; }
+    .login-box {
+        background: var(--surface); border: 1px solid var(--border);
+        padding: 40px 36px; width: 340px;
+        display: flex; flex-direction: column; gap: 20px;
+    }
+    .login-title { font-family: var(--sans); font-size: 22px; font-weight: 800; color: var(--accent); letter-spacing: -0.5px; }
+    .login-sub { font-size: 11px; color: var(--text-dim); line-height: 1.7; margin-top: -10px; }
+    .login-input, .field-input, .field-select {
+        background: var(--bg); border: 1px solid var(--border); color: var(--text);
+        font-family: var(--sans); font-size: 13px; padding: 8px 10px; outline: none;
+        width: 100%; transition: border-color 0.15s;
+    }
+    .login-input:focus, .field-input:focus, .field-select:focus { border-color: var(--accent); }
+    .login-msg { font-size: 12px; color: var(--text-dim); min-height: 16px; text-align: center; }
+    .login-msg.success { color: var(--accent); }
+    .login-msg.error   { color: var(--danger); }
+
+    .btn {
+        padding: 8px 16px; font-family: var(--sans); font-size: 12px; font-weight: 700;
+        letter-spacing: 0.04em; border: 1px solid var(--border); background: var(--bg);
+        color: var(--text); cursor: pointer; transition: all 0.15s;
+    }
+    .btn:hover { border-color: var(--accent); color: var(--accent); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent-dim); border-color: var(--accent-dim); color: #fff; }
+    .btn-danger { border-color: var(--danger); color: var(--danger); background: var(--bg); }
+    .btn-danger:hover { background: var(--danger); color: #fff; }
+    .btn-logout {
+        padding: 4px 10px; background: transparent; border: 1px solid var(--border);
+        color: var(--text-dim); font-family: var(--sans); font-size: 10px; font-weight: 700;
+        letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; transition: all 0.15s;
+    }
+    .btn-logout:hover { border-color: var(--danger); color: var(--danger); }
+
+    /* ── Layout ── */
+    .wrap { flex: 1; max-width: 1100px; width: 100%; margin: 0 auto; padding: 28px 24px 60px; }
+
+    .credential-banner {
+        border: 1px solid var(--accent); background: var(--surface);
+        padding: 16px 20px; margin-bottom: 24px; display: flex; flex-direction: column; gap: 12px;
+    }
+    .credential-banner.ok { border-color: var(--border); }
+    .credential-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .credential-row label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
+    .credential-row select { width: auto; }
+    .credential-row textarea {
+        flex: 1; min-width: 240px; background: var(--bg); border: 1px solid var(--border);
+        color: var(--text); font-family: var(--mono); font-size: 12px; padding: 8px 10px;
+        resize: vertical; min-height: 38px;
+    }
+    .credential-status { font-size: 11px; color: var(--text-dim); }
+    .credential-status.ok   { color: var(--accent); }
+    .credential-status.fail { color: var(--danger); }
+
+    /* ── Tabs ── */
+    .tabs { display: flex; gap: 2px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
+    .tab {
+        padding: 10px 18px; font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
+        text-transform: uppercase; color: var(--text-dim); cursor: pointer;
+        border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all 0.15s;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    /* ── Section chrome ── */
+    .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; gap: 12px; flex-wrap: wrap; }
+    .section-title { font-family: var(--serif); font-size: 17px; font-weight: 700; }
+    .section-sub { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+    .filter-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .filter-row .field-input { width: 220px; }
+
+    /* ── Tables ── */
+    table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); }
+    thead th {
+        text-align: left; font-size: 10px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;
+        color: var(--text-dim); padding: 10px 12px; border-bottom: 1px solid var(--border); background: var(--surface2);
+    }
+    tbody td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: top; }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: var(--surface2); }
+    tbody tr.revoked { opacity: 0.55; }
+    .mono { font-family: var(--mono); font-size: 12px; }
+    .clickable { cursor: pointer; }
+    .clickable:hover { color: var(--accent); }
+
+    .perm-badge {
+        display: inline-block; padding: 2px 8px; font-size: 10px; font-weight: 800;
+        letter-spacing: 0.06em; text-transform: uppercase; color: #fff; border-radius: 2px;
+    }
+    .perm-read  { background: var(--accent); }
+    .perm-write { background: var(--collection); }
+    .perm-admin { background: var(--relation); }
+
+    .status-pill {
+        display: inline-block; padding: 2px 8px; font-size: 10px; font-weight: 800;
+        letter-spacing: 0.06em; text-transform: uppercase; border: 1px solid var(--border); color: var(--text-dim);
+    }
+    .status-pill.revoked { border-color: var(--danger); color: var(--danger); }
+    .status-pill.expired { border-color: var(--text-muted); color: var(--text-muted); }
+    .status-pill.active  { border-color: var(--accent); color: var(--accent); }
+
+    .empty-state { padding: 40px 20px; text-align: center; color: var(--text-muted); font-size: 13px; }
+
+    /* ── Form ── */
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; max-width: 640px; }
+    .form-grid .full { grid-column: 1 / -1; }
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .field label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
+    .field-hint { font-size: 11px; color: var(--text-muted); }
+    .form-actions { margin-top: 4px; display: flex; align-items: center; gap: 14px; }
+    .result-box {
+        margin-top: 18px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--border);
+        font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-all; max-width: 640px;
+        display: none;
+    }
+    .result-box.show { display: block; }
+    .result-box.error { border-color: var(--danger); color: var(--danger); }
+
+    /* ── Toast ── */
+    .toast {
+        position: fixed; bottom: 24px; right: 24px; background: var(--text); color: var(--bg);
+        padding: 12px 18px; min-width: 220px; max-width: 360px; transform: translateY(20px);
+        opacity: 0; pointer-events: none; transition: all 0.25s; z-index: 2000;
+    }
+    .toast.show { transform: translateY(0); opacity: 1; }
+    .toast-label { font-size: 10px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
+    .toast.error .toast-label { color: #ff8888; }
+</style>
+</head>
+<body>
+
+<!-- Login overlay — same sessionStorage keys as ui/index.html, so a session started there carries over here. -->
+<div class="login-overlay hidden" id="login-overlay">
+    <div class="login-box">
+        <div class="login-title">Hatcheck Admin</div>
+        <div class="login-sub">Enter your email to receive a magic link.</div>
+        <input class="login-input" id="login-email" type="email"
+               placeholder="you@example.com"
+               onkeydown="if(event.key==='Enter') sendMagicLink()">
+        <button class="btn btn-primary" onclick="sendMagicLink()" id="login-btn">Send magic link</button>
+        <div class="login-msg" id="login-msg"></div>
+    </div>
+</div>
+
+<header>
+    <h1>Hatcheck <span>Admin</span></h1>
+    <div class="header-right">
+        <a class="header-link" href="/ui/">← Content</a>
+        <button class="btn-logout" id="logout-btn" onclick="logout()" style="display:none">Sign out</button>
+    </div>
+</header>
+
+<div class="wrap">
+
+    <!-- Admin credential panel — a valid session JWT proves identity, but the
+         capability routes separately require PermAdmin, satisfied either by
+         the one-time bootstrap token or a previously-issued admin capability. -->
+    <div class="credential-banner" id="credential-banner">
+        <div class="credential-row">
+            <label>Admin credential</label>
+            <select id="credential-type" class="field-select" style="width:auto" onchange="onCredentialTypeChange()">
+                <option value="bootstrap">Bootstrap token</option>
+                <option value="capability">Admin capability token</option>
+            </select>
+            <textarea id="credential-value" class="mono" placeholder="Paste the value here…" rows="1"></textarea>
+            <button class="btn" onclick="saveCredential()">Save &amp; verify</button>
+        </div>
+        <div class="credential-status" id="credential-status">
+            No admin credential set — Principals and Capabilities can't load until one is saved.
+        </div>
+    </div>
+
+    <div class="tabs">
+        <div class="tab active" data-tab="principals" onclick="switchTab('principals')">Principals</div>
+        <div class="tab" data-tab="capabilities" onclick="switchTab('capabilities')">Capabilities</div>
+        <div class="tab" data-tab="issue" onclick="switchTab('issue')">Issue capability</div>
+    </div>
+
+    <!-- ── Principals ── -->
+    <div class="panel active" id="panel-principals">
+        <div class="section-head">
+            <div>
+                <div class="section-title">Principals</div>
+                <div class="section-sub">Every distinct principal that has been issued a bound capability. Hatcheck has no separate user table — this list is derived entirely from the capability log.</div>
+            </div>
+            <button class="btn" onclick="loadPrincipals()">Refresh</button>
+        </div>
+        <table>
+            <thead><tr><th>Principal</th><th style="width:160px">Capabilities</th></tr></thead>
+            <tbody id="principals-body">
+                <tr><td colspan="2" class="empty-state">Not loaded yet.</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ── Capabilities ── -->
+    <div class="panel" id="panel-capabilities">
+        <div class="section-head">
+            <div>
+                <div class="section-title">Capabilities</div>
+                <div class="section-sub">All issued capabilities, or filtered to one principal. Revoking updates the live index immediately.</div>
+            </div>
+            <div class="filter-row">
+                <input class="field-input" id="cap-filter-principal" placeholder="Filter by principal…"
+                       onkeydown="if(event.key==='Enter') loadCapabilities()">
+                <button class="btn" onclick="loadCapabilities()">Filter</button>
+                <button class="btn" onclick="clearCapFilter()">Show all</button>
+            </div>
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th><th>Hash</th><th>Perm</th><th>Principal</th>
+                    <th>Email</th><th>Expires</th><th>Status</th><th style="width:90px"></th>
+                </tr>
+            </thead>
+            <tbody id="capabilities-body">
+                <tr><td colspan="8" class="empty-state">Not loaded yet.</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ── Issue capability ── -->
+    <div class="panel" id="panel-issue">
+        <div class="section-head">
+            <div>
+                <div class="section-title">Issue a capability</div>
+                <div class="section-sub">Creates and signs a new capability, appends it to the metadata log, and returns it below.</div>
+            </div>
+        </div>
+        <div class="form-grid">
+            <div class="field">
+                <label>Hash</label>
+                <input class="field-input mono" id="issue-hash" placeholder="Object hash, or * for wildcard">
+            </div>
+            <div class="field">
+                <label>Permission</label>
+                <select class="field-select" id="issue-perm">
+                    <option value="read">read</option>
+                    <option value="write">write</option>
+                    <option value="admin">admin (bootstrap credential only)</option>
+                </select>
+            </div>
+            <div class="field">
+                <label>Principal</label>
+                <input class="field-input" id="issue-principal" placeholder="Stytch user ID">
+            </div>
+            <div class="field">
+                <label>Email <span class="field-hint">(optional, display only)</span></label>
+                <input class="field-input" id="issue-email" placeholder="user@example.com">
+            </div>
+            <div class="field full">
+                <label>Expires</label>
+                <input class="field-input" id="issue-expires" type="datetime-local">
+                <div class="field-hint">Defaults to one year from now if left blank.</div>
+            </div>
+        </div>
+        <div class="form-actions">
+            <button class="btn btn-primary" onclick="issueCapability()" id="issue-btn">Issue capability</button>
+        </div>
+        <div class="result-box" id="issue-result"></div>
+    </div>
+
+</div>
+
+<div class="toast" id="toast">
+    <div class="toast-label" id="toast-label">Info</div>
+    <div id="toast-msg"></div>
+</div>
+
+<script>
+const API = '';
+
+// ── Auth state (shared sessionStorage keys with ui/index.html) ──
+let sessionJWT = sessionStorage.getItem('session_jwt') || '';
+let userID     = sessionStorage.getItem('user_id') || '';
+
+// ── Admin credential (separate concern — proves PermAdmin, not identity) ──
+let credentialType  = sessionStorage.getItem('admin_credential_type')  || 'bootstrap';
+let credentialValue = sessionStorage.getItem('admin_credential_value') || '';
+
+function updateAuthUI() {
+    const loggedIn = !!sessionJWT;
+    document.getElementById('login-overlay').classList.toggle('hidden', loggedIn);
+    document.getElementById('logout-btn').style.display = loggedIn ? '' : 'none';
+}
+
+// adminFetch injects the session JWT (identity, required by RequireAuth)
+// and the admin credential (PermAdmin, required by CapabilityMiddleware.Protect).
+async function adminFetch(url, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (sessionJWT) {
+        headers['Authorization'] = `Bearer ${sessionJWT}`;
+        headers['X-User-ID'] = userID;
+    }
+    if (credentialValue) {
+        if (credentialType === 'bootstrap') {
+            headers['X-Bootstrap-Token'] = credentialValue;
+        } else {
+            headers['X-Capability-Token'] = credentialValue;
+        }
+    }
+    const res = await fetch(url, { ...options, headers });
+    if (res.status === 401 && url.includes('/auth/')) {
+        clearAuth();
+        showToast('Session expired', 'Please sign in again.', true);
+        throw new Error('Session expired');
+    }
+    return res;
+}
+
+function clearAuth() {
+    sessionJWT = ''; userID = '';
+    sessionStorage.removeItem('session_jwt');
+    sessionStorage.removeItem('user_id');
+    updateAuthUI();
+}
+
+function logout() {
+    clearAuth();
+    showToast('Signed out', 'See you next time.');
+}
+
+async function sendMagicLink() {
+    const email = document.getElementById('login-email').value.trim();
+    const msg   = document.getElementById('login-msg');
+    const btn   = document.getElementById('login-btn');
+    if (!email) {
+        msg.textContent = 'Enter your email address.';
+        msg.className = 'login-msg error';
+        return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+    msg.textContent = ''; msg.className = 'login-msg';
+    try {
+        const res = await fetch(`${API}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email }),
+        });
+        if (!res.ok) throw new Error('Failed to send magic link');
+        msg.textContent = 'Magic link sent — check your email.';
+        msg.className = 'login-msg success';
+    } catch (err) {
+        msg.textContent = err.message;
+        msg.className = 'login-msg error';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Send magic link';
+    }
+}
+
+async function handleMagicLinkCallback() {
+    const params = new URLSearchParams(window.location.search);
+    const jwt = params.get('session_jwt');
+    const uid = params.get('user_id');
+    const email = params.get('email');
+    if (!jwt) return;
+    window.history.replaceState({}, '', window.location.pathname);
+    sessionJWT = jwt; userID = uid;
+    sessionStorage.setItem('session_jwt', sessionJWT);
+    sessionStorage.setItem('user_id', userID);
+    updateAuthUI();
+    showToast('Signed in', email || uid);
+}
+
+// ── Admin credential handling ──
+function onCredentialTypeChange() {
+    credentialType = document.getElementById('credential-type').value;
+}
+
+function saveCredential() {
+    credentialType  = document.getElementById('credential-type').value;
+    credentialValue = document.getElementById('credential-value').value.trim();
+    sessionStorage.setItem('admin_credential_type', credentialType);
+    sessionStorage.setItem('admin_credential_value', credentialValue);
+    verifyCredential();
+}
+
+async function verifyCredential() {
+    const status = document.getElementById('credential-status');
+    const banner = document.getElementById('credential-banner');
+    if (!credentialValue) {
+        status.textContent = "No admin credential set — Principals and Capabilities can't load until one is saved.";
+        status.className = 'credential-status';
+        banner.classList.remove('ok');
+        return false;
+    }
+    try {
+        const res = await adminFetch(`${API}/principals`);
+        if (res.ok) {
+            status.textContent = 'Admin credential verified.';
+            status.className = 'credential-status ok';
+            banner.classList.add('ok');
+            // Clear the "loaded" flags so previously-failed (pre-credential)
+            // tables refresh instead of showing a stale error, then reload
+            // whichever tab is currently visible.
+            principalsLoaded = false;
+            capabilitiesLoaded = false;
+            const activePanel = document.querySelector('.panel.active');
+            if (activePanel && activePanel.id === 'panel-principals') loadPrincipals();
+            if (activePanel && activePanel.id === 'panel-capabilities') loadCapabilities();
+            return true;
+        }
+        status.textContent = `Credential rejected (HTTP ${res.status}). Check the value and try again.`;
+        status.className = 'credential-status fail';
+        banner.classList.remove('ok');
+        return false;
+    } catch (err) {
+        status.textContent = `Could not verify: ${err.message}`;
+        status.className = 'credential-status fail';
+        banner.classList.remove('ok');
+        return false;
+    }
+}
+
+// ── Tabs ──
+function switchTab(name) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+    document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === `panel-${name}`));
+    if (name === 'principals' && !principalsLoaded) loadPrincipals();
+    if (name === 'capabilities' && !capabilitiesLoaded) loadCapabilities();
+}
+
+// ── Principals ──
+let principalsLoaded = false;
+
+async function loadPrincipals() {
+    const body = document.getElementById('principals-body');
+    body.innerHTML = '<tr><td colspan="2" class="empty-state">Loading…</td></tr>';
+    try {
+        const res = await adminFetch(`${API}/principals`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const principals = await res.json();
+        principalsLoaded = true;
+        if (!principals.length) {
+            body.innerHTML = '<tr><td colspan="2" class="empty-state">No principals yet — no bound capabilities have been issued.</td></tr>';
+            return;
+        }
+        body.innerHTML = principals.map(p => `
+            <tr>
+                <td class="mono clickable" onclick="viewPrincipalCapabilities('${escAttr(p)}')">${escHtml(p)}</td>
+                <td><button class="btn" onclick="viewPrincipalCapabilities('${escAttr(p)}')">View →</button></td>
+            </tr>
+        `).join('');
+    } catch (err) {
+        body.innerHTML = `<tr><td colspan="2" class="empty-state">Failed to load: ${escHtml(err.message)}</td></tr>`;
+    }
+}
+
+function viewPrincipalCapabilities(principal) {
+    document.getElementById('cap-filter-principal').value = principal;
+    switchTab('capabilities');
+    loadCapabilities();
+}
+
+// ── Capabilities ──
+let capabilitiesLoaded = false;
+
+function clearCapFilter() {
+    document.getElementById('cap-filter-principal').value = '';
+    loadCapabilities();
+}
+
+async function loadCapabilities() {
+    const principal = document.getElementById('cap-filter-principal').value.trim();
+    const body = document.getElementById('capabilities-body');
+    body.innerHTML = '<tr><td colspan="8" class="empty-state">Loading…</td></tr>';
+    try {
+        const url = principal
+            ? `${API}/capabilities?principal=${encodeURIComponent(principal)}`
+            : `${API}/capabilities`;
+        const res = await adminFetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const caps = await res.json();
+        capabilitiesLoaded = true;
+        if (!caps.length) {
+            body.innerHTML = '<tr><td colspan="8" class="empty-state">No capabilities found.</td></tr>';
+            return;
+        }
+        body.innerHTML = caps.map(renderCapabilityRow).join('');
+    } catch (err) {
+        body.innerHTML = `<tr><td colspan="8" class="empty-state">Failed to load: ${escHtml(err.message)}</td></tr>`;
+    }
+}
+
+function renderCapabilityRow(cap) {
+    const expired = new Date(cap.expires) < new Date();
+    let statusHtml;
+    if (cap.revoked) statusHtml = '<span class="status-pill revoked">Revoked</span>';
+    else if (expired) statusHtml = '<span class="status-pill expired">Expired</span>';
+    else statusHtml = '<span class="status-pill active">Active</span>';
+
+    const rowClass = cap.revoked ? 'revoked' : '';
+    const idShort = cap.id ? cap.id.slice(0, 12) + '…' : '';
+    const hashDisplay = cap.hash === '*' ? '<em>* (wildcard)</em>' : (cap.hash || '').slice(0, 16) + ((cap.hash || '').length > 16 ? '…' : '');
+
+    return `
+        <tr class="${rowClass}">
+            <td class="mono" title="${escAttr(cap.id)}">${escHtml(idShort)}</td>
+            <td class="mono" title="${escAttr(cap.hash)}">${hashDisplay}</td>
+            <td><span class="perm-badge perm-${escAttr(cap.perm)}">${escHtml(cap.perm)}</span></td>
+            <td class="mono clickable" onclick="viewPrincipalCapabilities('${escAttr(cap.principal || '')}')">${escHtml(cap.principal || '(bearer)')}</td>
+            <td>${escHtml(cap.email || '—')}</td>
+            <td>${escHtml(formatExpiry(cap.expires))}</td>
+            <td>${statusHtml}</td>
+            <td>${cap.revoked ? '' : `<button class="btn btn-danger" onclick="revokeCapability('${escAttr(cap.id)}')">Revoke</button>`}</td>
+        </tr>
+    `;
+}
+
+function formatExpiry(iso) {
+    try {
+        return new Date(iso).toLocaleString();
+    } catch {
+        return iso;
+    }
+}
+
+async function revokeCapability(id) {
+    if (!confirm(`Revoke capability ${id}? This takes effect immediately.`)) return;
+    try {
+        const res = await adminFetch(`${API}/capability/revoke?id=${encodeURIComponent(id)}`, { method: 'POST' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        showToast('Revoked', `Capability ${id.slice(0, 12)}… revoked.`);
+        loadCapabilities();
+    } catch (err) {
+        showToast('Revoke failed', err.message, true);
+    }
+}
+
+// ── Issue capability ──
+async function issueCapability() {
+    const hash      = document.getElementById('issue-hash').value.trim();
+    const perm      = document.getElementById('issue-perm').value;
+    const principal = document.getElementById('issue-principal').value.trim();
+    const email     = document.getElementById('issue-email').value.trim();
+    const expiresLocal = document.getElementById('issue-expires').value;
+    const resultBox = document.getElementById('issue-result');
+    const btn       = document.getElementById('issue-btn');
+
+    if (!hash || !principal) {
+        showToast('Missing fields', 'Hash and principal are required.', true);
+        return;
+    }
+
+    let expiresISO;
+    if (expiresLocal) {
+        expiresISO = new Date(expiresLocal).toISOString();
+    } else {
+        const d = new Date();
+        d.setFullYear(d.getFullYear() + 1);
+        expiresISO = d.toISOString();
+    }
+
+    const params = new URLSearchParams({ hash, perm, principal, expires: expiresISO });
+    if (email) params.set('email', email);
+
+    btn.disabled = true;
+    btn.textContent = 'Issuing…';
+    resultBox.classList.remove('show', 'error');
+    try {
+        const res = await adminFetch(`${API}/capability?${params.toString()}`, { method: 'POST' });
+        const text = await res.text();
+        if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
+        resultBox.textContent = text;
+        resultBox.classList.add('show');
+        showToast('Capability issued', `Issued to ${principal}`);
+        loadCapabilities();
+    } catch (err) {
+        resultBox.textContent = err.message;
+        resultBox.classList.add('show', 'error');
+        showToast('Issue failed', err.message, true);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Issue capability';
+    }
+}
+
+// ── Helpers ──
+function showToast(label, msg, isError = false) {
+    const toast = document.getElementById('toast');
+    document.getElementById('toast-label').textContent = label;
+    document.getElementById('toast-msg').textContent = msg;
+    toast.classList.toggle('error', isError);
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 3000);
+}
+
+function escHtml(str) {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function escAttr(str) {
+    return String(str).replace(/'/g, "\\'");
+}
+
+// ── Init ──
+document.addEventListener('DOMContentLoaded', () => {
+    handleMagicLinkCallback().then(updateAuthUI);
+    document.getElementById('credential-type').value = credentialType;
+    document.getElementById('credential-value').value = credentialValue;
+    if (credentialValue) {
+        // verifyCredential() reloads the active tab's data itself on success.
+        verifyCredential();
+    } else {
+        document.getElementById('principals-body').innerHTML =
+            '<tr><td colspan="2" class="empty-state">Set an admin credential above, then this will load automatically.</td></tr>';
+    }
+});
+</script>
+</body>
+</html>
