@@ -24,6 +24,29 @@ const (
 	PermAdmin = "admin"
 )
 
+// resolveEmail returns email if non-empty, otherwise backfills it from the
+// principal's own capability history. RequireAuth only populates Email when
+// Stytch's session validation takes its remote path (see
+// internal/auth.ValidateSessionJWT) — the fast local-JWT path it uses for
+// most requests has no user record to read email from, so most
+// write-capability issuance would otherwise carry no email at all even
+// though the same principal's login-issued read capability does (login
+// always calls Stytch's remote AuthenticateMagicLink). Email carries no
+// authority here regardless — this is purely a display-field backfill and
+// changes nothing about who is allowed to do what.
+func resolveEmail(meta *metadata.Store, principal, email string) string {
+	if email != "" || principal == "" {
+		return email
+	}
+	caps := meta.CapabilitiesForPrincipal(principal)
+	for i := len(caps) - 1; i >= 0; i-- {
+		if caps[i].Email != "" {
+			return caps[i].Email
+		}
+	}
+	return ""
+}
+
 // stashAndIssue stores content in the CAS, records it in the metadata log,
 // issues a bound write capability for the resulting hash tied to the
 // creating principal, and returns both the hash and the capability.
@@ -46,6 +69,8 @@ func stashAndIssue(
 	if err := appendMeta(hash); err != nil {
 		log.Printf("warning: failed to append metadata for %s: %v", hash, err)
 	}
+
+	email = resolveEmail(meta, principal, email)
 
 	expires := time.Now().UTC().Add(expiry)
 	cap := metadata.SignCapability(key, hash, PermWrite, principal, email, expires)
@@ -559,7 +584,6 @@ func main() {
 		metadata.NewDateIndex(),
 		metadata.NewNameIndex(),
 		metadata.NewRelationIndex(),
-		metadata.NewCapabilityIndex(),
 	)
 	if err != nil {
 		log.Fatalf("failed to load metadata store: %v", err)
