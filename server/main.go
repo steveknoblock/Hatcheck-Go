@@ -584,6 +584,7 @@ func main() {
 		metadata.NewDateIndex(),
 		metadata.NewNameIndex(),
 		metadata.NewRelationIndex(),
+		metadata.NewCapabilityIndex(),
 	)
 	if err != nil {
 		log.Fatalf("failed to load metadata store: %v", err)
