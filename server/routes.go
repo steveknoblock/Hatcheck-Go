@@ -90,6 +90,11 @@ func registerRoutes(
 	http.HandleFunc("/principals", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		principalsHandler(w, req, meta, vr)
 	})))))
+	// GET /config returns non-secret configuration and basic store stats
+	// for admin visibility — never the signing key or bootstrap token value.
+	http.HandleFunc("/config", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+		configHandler(w, req, cfg, store, meta, vr)
+	})))))
 
 	http.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.Dir(cfg.UIPath))))
 }
