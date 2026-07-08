@@ -18,7 +18,7 @@ type Config struct {
 	ObjPath    string // HATCHECK_DATA
 	MetaPath   string // HATCHECK_META
 	UIPath     string // HATCHECK_UI
-	SigningKey  []byte // HATCHECK_SIGNING_KEY
+	SigningKey []byte // HATCHECK_SIGNING_KEY
 
 	// Optional — identity and auth.
 	BootstrapToken string // HATCHECK_BOOTSTRAP_TOKEN

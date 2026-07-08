@@ -73,12 +73,27 @@ func registerRoutes(
 		importHandler(w, req, cfg.ObjPath, cfg.MetaPath, vr)
 	})))))
 	// POST /capability issues a new capability. Other methods return 405.
-	// GET /capability (capability lookup by ID) is not currently implemented.
 	http.HandleFunc("/capability", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		issueHandler(w, req, cm.Key, meta, vr)
 	})))))
 	http.HandleFunc("/capability/revoke", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		revokeHandler(w, req, meta, cm.Revoked, vr)
+	})))))
+	// GET /capabilities lists issued capabilities for admin visibility —
+	// all of them, filtered by ?principal=, or a single one by ?id=.
+	// Used by the access-control admin UI to show who holds what.
+	http.HandleFunc("/capabilities", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+		capabilitiesHandler(w, req, meta, cm.Revoked, vr)
+	})))))
+	// GET /principals lists distinct principals derived from the capability
+	// log — Hatcheck's closest equivalent to a user directory.
+	http.HandleFunc("/principals", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+		principalsHandler(w, req, meta, vr)
+	})))))
+	// GET /config returns non-secret configuration and basic store stats
+	// for admin visibility — never the signing key or bootstrap token value.
+	http.HandleFunc("/config", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+		configHandler(w, req, cfg, store, meta, vr)
 	})))))
 
 	http.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.Dir(cfg.UIPath))))
