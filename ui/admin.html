@@ -172,6 +172,19 @@
 
     .empty-state { padding: 40px 20px; text-align: center; color: var(--text-muted); font-size: 13px; }
 
+    /* ── Config panel ── */
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin-bottom: 24px; }
+    .stat-card { background: var(--surface); border: 1px solid var(--border); padding: 14px 16px; text-align: center; }
+    .stat-value { font-family: var(--serif); font-size: 26px; font-weight: 700; color: var(--accent); }
+    .stat-label { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); margin-top: 4px; }
+    .kv-table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); margin-bottom: 20px; }
+    .kv-table td { padding: 9px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
+    .kv-table tr:last-child td { border-bottom: none; }
+    .kv-table td:first-child { font-weight: 700; color: var(--text-dim); width: 220px; }
+    .kv-table td:last-child { font-family: var(--mono); }
+    .config-subhead { font-size: 12px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); margin: 20px 0 8px; }
+    .bootstrap-warn { border: 1px solid var(--relation); background: var(--surface); color: var(--relation); padding: 10px 14px; font-size: 12px; margin-bottom: 16px; }
+
     /* ── Form ── */
     .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; max-width: 640px; }
     .form-grid .full { grid-column: 1 / -1; }
@@ -245,6 +258,7 @@
         <div class="tab active" data-tab="principals" onclick="switchTab('principals')">Principals</div>
         <div class="tab" data-tab="capabilities" onclick="switchTab('capabilities')">Capabilities</div>
         <div class="tab" data-tab="issue" onclick="switchTab('issue')">Issue capability</div>
+        <div class="tab" data-tab="config" onclick="switchTab('config')">Config</div>
     </div>
 
     <!-- ── Principals ── -->
@@ -330,6 +344,20 @@
             <button class="btn btn-primary" onclick="issueCapability()" id="issue-btn">Issue capability</button>
         </div>
         <div class="result-box" id="issue-result"></div>
+    </div>
+
+    <!-- ── Config ── -->
+    <div class="panel" id="panel-config">
+        <div class="section-head">
+            <div>
+                <div class="section-title">Configuration &amp; stats</div>
+                <div class="section-sub">Non-secret configuration values and basic store statistics. The signing key and bootstrap token value are never exposed here.</div>
+            </div>
+            <button class="btn" onclick="loadConfig()">Refresh</button>
+        </div>
+        <div id="config-content">
+            <div class="empty-state">Not loaded yet.</div>
+        </div>
     </div>
 
 </div>
@@ -469,9 +497,11 @@ async function verifyCredential() {
             // whichever tab is currently visible.
             principalsLoaded = false;
             capabilitiesLoaded = false;
+            configLoaded = false;
             const activePanel = document.querySelector('.panel.active');
             if (activePanel && activePanel.id === 'panel-principals') loadPrincipals();
             if (activePanel && activePanel.id === 'panel-capabilities') loadCapabilities();
+            if (activePanel && activePanel.id === 'panel-config') loadConfig();
             return true;
         }
         status.textContent = `Credential rejected (HTTP ${res.status}). Check the value and try again.`;
@@ -492,6 +522,7 @@ function switchTab(name) {
     document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === `panel-${name}`));
     if (name === 'principals' && !principalsLoaded) loadPrincipals();
     if (name === 'capabilities' && !capabilitiesLoaded) loadCapabilities();
+    if (name === 'config' && !configLoaded) loadConfig();
 }
 
 // ── Principals ──
@@ -647,6 +678,74 @@ async function issueCapability() {
         btn.disabled = false;
         btn.textContent = 'Issue capability';
     }
+}
+
+// ── Config ──
+let configLoaded = false;
+
+async function loadConfig() {
+    const container = document.getElementById('config-content');
+    container.innerHTML = '<div class="empty-state">Loading…</div>';
+    try {
+        const res = await adminFetch(`${API}/config`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const cfg = await res.json();
+        configLoaded = true;
+        container.innerHTML = renderConfig(cfg);
+    } catch (err) {
+        container.innerHTML = `<div class="empty-state">Failed to load: ${escHtml(err.message)}</div>`;
+    }
+}
+
+function renderConfig(cfg) {
+    const stats = cfg.stats || {};
+    const rates = cfg.rate_limits || {};
+
+    const statCards = [
+        ['Objects', stats.object_count],
+        ['Capabilities', stats.capability_count],
+        ['Principals', stats.principal_count],
+        ['Tags', stats.tag_count],
+        ['Namespaces', stats.namespace_count],
+    ].map(([label, val]) => `
+        <div class="stat-card">
+            <div class="stat-value">${val ?? 0}</div>
+            <div class="stat-label">${escHtml(label)}</div>
+        </div>
+    `).join('');
+
+    const bootstrapWarning = cfg.bootstrap_token_set
+        ? `<div class="bootstrap-warn">A bootstrap token is currently set. Consider rotating it out once real admin capabilities are established — it grants PermAdmin without a signed capability.</div>`
+        : '';
+
+    const rateRow = (name, r) => `
+        <tr>
+            <td>${escHtml(name)}</td>
+            <td>${r ? `${escHtml(r.interval)} interval, burst of ${r.burst}` : '—'}</td>
+        </tr>
+    `;
+
+    return `
+        <div class="stat-grid">${statCards}</div>
+        ${bootstrapWarning}
+        <div class="config-subhead">Paths</div>
+        <table class="kv-table">
+            <tr><td>Object storage</td><td>${escHtml(cfg.obj_path)}</td></tr>
+            <tr><td>Metadata log</td><td>${escHtml(cfg.meta_path)}</td></tr>
+            <tr><td>UI assets</td><td>${escHtml(cfg.ui_path)}</td></tr>
+        </table>
+        <div class="config-subhead">Capabilities</div>
+        <table class="kv-table">
+            <tr><td>Default expiry</td><td>${escHtml(cfg.capability_expiry)}</td></tr>
+            <tr><td>Bootstrap token set</td><td>${cfg.bootstrap_token_set ? 'yes' : 'no'}</td></tr>
+        </table>
+        <div class="config-subhead">Rate limits</div>
+        <table class="kv-table">
+            ${rateRow('Read', rates.read)}
+            ${rateRow('Write', rates.write)}
+            ${rateRow('Admin', rates.admin)}
+        </table>
+    `;
 }
 
 // ── Helpers ──
