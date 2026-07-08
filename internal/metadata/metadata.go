@@ -283,6 +283,69 @@ func (s *Store) BuildRevokedSet(revoked *RevokedSet) error {
 	return nil
 }
 
+// --- Capability queries ---
+
+// CapabilitiesForPrincipal returns every capability ever issued to a given
+// principal, in issuance order. Pass "" to retrieve bearer-token
+// capabilities (those issued with no bound principal). This does not filter
+// out revoked or expired capabilities — callers that need current validity
+// should join the result against a RevokedSet and check Expires themselves,
+// the same way CapabilityMiddleware.Protect does at verification time.
+func (s *Store) CapabilitiesForPrincipal(principal string) []CapabilityPayload {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if idx, ok := s.indexMap["capability"]; ok {
+		if cq, ok := idx.(CapabilityQuerier); ok {
+			return cq.QueryRich(principal)
+		}
+	}
+	return []CapabilityPayload{}
+}
+
+// AllCapabilities returns every capability ever issued, in log order.
+func (s *Store) AllCapabilities() []CapabilityPayload {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if idx, ok := s.indexMap["capability"]; ok {
+		if cq, ok := idx.(CapabilityQuerier); ok {
+			return cq.All()
+		}
+	}
+	return []CapabilityPayload{}
+}
+
+// CapabilityByID returns a single capability by its ID, if one was ever
+// issued with that ID.
+func (s *Store) CapabilityByID(id string) (CapabilityPayload, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if idx, ok := s.indexMap["capability"]; ok {
+		if cq, ok := idx.(CapabilityQuerier); ok {
+			return cq.ByID(id)
+		}
+	}
+	return CapabilityPayload{}, false
+}
+
+// Principals returns all distinct principals that have been issued at least
+// one bound capability. This is Hatcheck's closest thing to a user
+// directory — there is no separate user table; a "user" is simply a
+// principal string that has shown up on an issued capability.
+func (s *Store) Principals() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if idx, ok := s.indexMap["capability"]; ok {
+		if cq, ok := idx.(CapabilityQuerier); ok {
+			return cq.Principals()
+		}
+	}
+	return []string{}
+}
+
 // --- Query ---
 
 // Query returns results from the named index for the given key.

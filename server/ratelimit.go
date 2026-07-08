@@ -5,8 +5,6 @@ import (
 	"math"
 	"net/http"
 	"sync"
-	"time"
-
 	"golang.org/x/time/rate"
 )
 
@@ -98,17 +96,12 @@ type RateLimiters struct {
 	Admin *RateLimitMiddleware // /export, /import, /capability, /capability/revoke
 }
 
-// NewRateLimiters constructs the three pools. Call once from main().
-//
-// Starting limits — adjust based on observed usage:
-//
-//	Read:  1 request/second sustained, burst of 10
-//	Write: 1 request/5 seconds sustained, burst of 4
-//	Admin: 1 request/30 seconds sustained, burst of 2
-func NewRateLimiters() *RateLimiters {
+// NewRateLimiters constructs the three pools from the provided Config.
+// Call once from main() after LoadConfig().
+func NewRateLimiters(cfg Config) *RateLimiters {
 	return &RateLimiters{
-		Read:  NewRateLimitMiddleware(rate.Every(time.Second), 10),
-		Write: NewRateLimitMiddleware(rate.Every(5*time.Second), 4),
-		Admin: NewRateLimitMiddleware(rate.Every(30*time.Second), 2),
+		Read:  NewRateLimitMiddleware(cfg.RateReadTokens, cfg.RateReadBurst),
+		Write: NewRateLimitMiddleware(cfg.RateWriteTokens, cfg.RateWriteBurst),
+		Admin: NewRateLimitMiddleware(cfg.RateAdminTokens, cfg.RateAdminBurst),
 	}
 }

@@ -18,9 +18,7 @@ func registerRoutes(
 	cm *CapabilityMiddleware,
 	rl *RateLimiters,
 	authClient *auth.Client,
-	objPath string,
-	metaPath string,
-	uiPath string,
+	cfg Config,
 ) {
 	// Auth routes — not capability protected, but also not JWT protected
 	// since these are the routes that establish identity in the first place.
@@ -28,7 +26,7 @@ func registerRoutes(
 		loginHandler(w, req, authClient)
 	})
 	http.HandleFunc("/auth/authenticate", func(w http.ResponseWriter, req *http.Request) {
-		authenticateHandler(w, req, authClient, meta, cm.Key)
+		authenticateHandler(w, req, authClient, meta, cm.Key, cfg)
 	})
 	http.HandleFunc("/auth/logout", logoutHandler)
 
@@ -36,7 +34,7 @@ func registerRoutes(
 	// capability for the resulting hash automatically, making stash the
 	// ownership creation point.
 	http.HandleFunc("/stash", Adapt(am.RequireAuth(rl.Write.Limit(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		stashHandler(w, req, store, meta, cm.Key, vr)
+		stashHandler(w, req, store, meta, cm.Key, cfg, vr)
 	}))))
 	http.HandleFunc("/fetch", Adapt(am.RequireAuth(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		fetchHandler(w, req, store, vr)
@@ -57,10 +55,10 @@ func registerRoutes(
 		nameHandler(w, req, meta, vr)
 	})))))
 	http.HandleFunc("/collection", Adapt(am.RequireAuth(rl.Write.Limit(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		collectionHandler(w, req, store, meta, cm.Key, vr)
+		collectionHandler(w, req, store, meta, cm.Key, cfg, vr)
 	}))))
 	http.HandleFunc("/relation", Adapt(am.RequireAuth(rl.Write.Limit(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		relationHandler(w, req, store, meta, cm.Key, vr)
+		relationHandler(w, req, store, meta, cm.Key, cfg, vr)
 	}))))
 	http.HandleFunc("/relations", Adapt(am.RequireAuth(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		relationsHandler(w, req, meta, vr)
@@ -69,19 +67,34 @@ func registerRoutes(
 		tagsHandler(w, req, meta, vr)
 	})))))
 	http.HandleFunc("/export", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		exportHandler(w, req, objPath, metaPath, vr)
+		exportHandler(w, req, cfg.ObjPath, cfg.MetaPath, vr)
 	})))))
 	http.HandleFunc("/import", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		importHandler(w, req, objPath, metaPath, vr)
+		importHandler(w, req, cfg.ObjPath, cfg.MetaPath, vr)
 	})))))
 	// POST /capability issues a new capability. Other methods return 405.
-	// GET /capability (capability lookup by ID) is not currently implemented.
 	http.HandleFunc("/capability", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		issueHandler(w, req, cm.Key, meta, vr)
 	})))))
 	http.HandleFunc("/capability/revoke", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		revokeHandler(w, req, meta, cm.Revoked, vr)
 	})))))
+	// GET /capabilities lists issued capabilities for admin visibility —
+	// all of them, filtered by ?principal=, or a single one by ?id=.
+	// Used by the access-control admin UI to show who holds what.
+	http.HandleFunc("/capabilities", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+		capabilitiesHandler(w, req, meta, cm.Revoked, vr)
+	})))))
+	// GET /principals lists distinct principals derived from the capability
+	// log — Hatcheck's closest equivalent to a user directory.
+	http.HandleFunc("/principals", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+		principalsHandler(w, req, meta, vr)
+	})))))
+	// GET /config returns non-secret configuration and basic store stats
+	// for admin visibility — never the signing key or bootstrap token value.
+	http.HandleFunc("/config", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+		configHandler(w, req, cfg, store, meta, vr)
+	})))))
 
-	http.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.Dir(uiPath))))
+	http.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.Dir(cfg.UIPath))))
 }
