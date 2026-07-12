@@ -30,6 +30,8 @@ const (
 	OpNameUpdate       = "name-update"
 	OpCapability       = "capability"
 	OpCapabilityRevoke = "capability-revoke"
+	OpRoleAssign       = "role-assign"
+	OpRoleRevoke       = "role-revoke"
 )
 
 // --- Payload structs ---
@@ -43,12 +45,6 @@ type StashPayload struct {
 type CollectionPayload struct {
 	Hash   string   `json:"hash"`
 	Hashes []string `json:"hashes"`
-}
-
-type ContextPayload struct {
-	Hash        string   `json:"hash"`
-	ShiftedFrom string   `json:"shifted_from"`
-	Hashes      []string `json:"hashes"`
 }
 
 type RelationPayload struct {
@@ -95,6 +91,26 @@ type CapabilityRevokePayload struct {
 type NamePayload struct {
 	Label string `json:"label"`
 	Hash  string `json:"hash"`
+}
+
+// RoleAssignPayload records the assignment of a named role to a principal.
+// AssignedBy is the principal of the admin who made the assignment, included
+// for audit purposes. Reason is optional free-text documentation.
+type RoleAssignPayload struct {
+	Principal  string `json:"principal"`
+	Role       string `json:"role"`
+	AssignedBy string `json:"assigned_by"`
+	Reason     string `json:"reason,omitempty"`
+}
+
+// RoleRevokePayload records the removal of a named role from a principal.
+// RevokedBy is the principal of the admin who made the removal, included
+// for audit purposes. Reason is optional free-text documentation.
+type RoleRevokePayload struct {
+	Principal string `json:"principal"`
+	Role      string `json:"role"`
+	RevokedBy string `json:"revoked_by"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 // --- Capability helpers ---

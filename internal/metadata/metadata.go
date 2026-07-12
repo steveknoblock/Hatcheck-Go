@@ -450,6 +450,94 @@ func (s *Store) Namespaces() []string {
 	return []string{}
 }
 
+// --- Role methods ---
+
+// AppendRoleAssign records the assignment of a role to a principal in the log
+// and updates the live RoleIndex immediately.
+func (s *Store) AppendRoleAssign(principal, role, assignedBy, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	payload, err := json.Marshal(RoleAssignPayload{
+		Principal:  principal,
+		Role:       role,
+		AssignedBy: assignedBy,
+		Reason:     reason,
+	})
+	if err != nil {
+		return err
+	}
+
+	return s.append(Entry{
+		Op:      OpRoleAssign,
+		Created: time.Now().UTC(),
+		Payload: payload,
+	})
+}
+
+// AppendRoleRevoke records the removal of a role from a principal in the log
+// and updates the live RoleIndex immediately.
+func (s *Store) AppendRoleRevoke(principal, role, revokedBy, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	payload, err := json.Marshal(RoleRevokePayload{
+		Principal: principal,
+		Role:      role,
+		RevokedBy: revokedBy,
+		Reason:    reason,
+	})
+	if err != nil {
+		return err
+	}
+
+	return s.append(Entry{
+		Op:      OpRoleRevoke,
+		Created: time.Now().UTC(),
+		Payload: payload,
+	})
+}
+
+// RolesForPrincipal returns the current role names held by the given principal.
+func (s *Store) RolesForPrincipal(principal string) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if idx, ok := s.indexMap["role"]; ok {
+		if rq, ok := idx.(RoleQuerier); ok {
+			return rq.RolesForPrincipal(principal)
+		}
+	}
+	return []string{}
+}
+
+// PrincipalsForRole returns the principals currently holding the given role.
+func (s *Store) PrincipalsForRole(role string) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if idx, ok := s.indexMap["role"]; ok {
+		if rq, ok := idx.(RoleQuerier); ok {
+			return rq.PrincipalsForRole(role)
+		}
+	}
+	return []string{}
+}
+
+// Roles returns all distinct role names that currently have at least one
+// active assignment.
+func (s *Store) Roles() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if idx, ok := s.indexMap["role"]; ok {
+		if rq, ok := idx.(RoleQuerier); ok {
+			return rq.Roles()
+		}
+	}
+	return []string{}
+}
+
 // IndexNames returns the names of all registered indexes.
 func (s *Store) IndexNames() []string {
 	names := make([]string, len(s.indexes))

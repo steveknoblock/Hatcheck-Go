@@ -38,6 +38,13 @@ type CapabilityQuerier interface {
 	Principals() []string
 }
 
+// RoleQuerier is implemented by indexes that support role assignment queries.
+type RoleQuerier interface {
+	RolesForPrincipal(principal string) []string
+	PrincipalsForRole(role string) []string
+	Roles() []string
+}
+
 // --- Helpers ---
 
 func appendUnique(slice []string, val string) []string {
