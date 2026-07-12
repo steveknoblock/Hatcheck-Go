@@ -1,0 +1,71 @@
+services:
+  hatcheck:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Keep in sync with the `go` directive in go.mod. See the note in
+        # the Dockerfile — go.mod currently says 1.25.0 as an unintended
+        # side effect of an unrelated commit; drop this if/when it's
+        # pinned back down.
+        GO_VERSION: "1.25.0"
+    image: hatcheck-go:local
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    environment:
+      # Non-secret — safe to hardcode since these are just in-container paths.
+      HATCHECK_DATA: /app/objects
+      HATCHECK_META: /app/metadata
+      HATCHECK_UI: /app/ui
+      # Secrets — pulled from .env (see .env.example). Do not commit a real
+      # .env file; HATCHECK_SIGNING_KEY and the STYTCH_* vars are
+      # credentials, and HATCHECK_SIGNING_KEY signs every capability HMAC.
+      HATCHECK_SIGNING_KEY: ${HATCHECK_SIGNING_KEY:?HATCHECK_SIGNING_KEY must be set — server calls log.Fatal without it}
+      HATCHECK_BOOTSTRAP_TOKEN: ${HATCHECK_BOOTSTRAP_TOKEN:-}
+      STYTCH_PROJECT_ID: ${STYTCH_PROJECT_ID:?STYTCH_PROJECT_ID must be set}
+      STYTCH_SECRET: ${STYTCH_SECRET:?STYTCH_SECRET must be set}
+      STYTCH_REDIRECT_URL: ${STYTCH_REDIRECT_URL:-http://localhost:8090/auth/authenticate}
+      # Operational tuning — every one of these is optional; Config.go's own
+      # envDuration/envInt helpers fall back to sane defaults (see config.go)
+      # if left blank here, an unset var in .env resolves to "" via the
+      # ${VAR:-} syntax below, which envOr/envInt/envDuration treat exactly
+      # the same as "unset". IMPORTANT: earlier versions of this file did
+      # NOT forward these — anything set in .env was silently ignored
+      # because Compose only passes through vars actually listed here.
+      # If the admin UI trips 429s during normal browsing, raise
+      # HATCHECK_RATE_ADMIN_INTERVAL/BURST in .env — the built-in defaults
+      # (30s interval, burst of 2) are tuned for infrequent admin actions
+      # like /export or /capability, not a UI polling several endpoints
+      # per page load.
+      HATCHECK_CAPABILITY_EXPIRY: ${HATCHECK_CAPABILITY_EXPIRY:-}
+      HATCHECK_RATE_READ_INTERVAL: ${HATCHECK_RATE_READ_INTERVAL:-}
+      HATCHECK_RATE_READ_BURST: ${HATCHECK_RATE_READ_BURST:-}
+      HATCHECK_RATE_WRITE_INTERVAL: ${HATCHECK_RATE_WRITE_INTERVAL:-}
+      HATCHECK_RATE_WRITE_BURST: ${HATCHECK_RATE_WRITE_BURST:-}
+      HATCHECK_RATE_ADMIN_INTERVAL: ${HATCHECK_RATE_ADMIN_INTERVAL:-}
+      HATCHECK_RATE_ADMIN_BURST: ${HATCHECK_RATE_ADMIN_BURST:-}
+    volumes:
+      # Named volumes so the CAS and metadata log survive container
+      # recreation. The metadata log is the source of truth for names,
+      # relations, tags, and the capability/revocation state — losing this
+      # volume loses all of it, not just convenience data.
+      - hatcheck-objects:/app/objects
+      - hatcheck-metadata:/app/metadata
+    healthcheck:
+      # /ui/ is served by a plain http.FileServer with no auth middleware
+      # and serves ui/index.html, so it's a real unauthenticated 200 check.
+      # (Note: /auth/login looks tempting but is POST-only — a GET/HEAD
+      # spider check against it always returns 405, not 200.) This still
+      # only confirms the HTTP server is up, not that the metadata store
+      # or Stytch client initialised cleanly — swap in a dedicated
+      # /healthz route later if you want real readiness semantics.
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8090/ui/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  hatcheck-objects:
+  hatcheck-metadata:

@@ -9,13 +9,85 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
+	"github.com/steveknoblock/hatcheck-go/internal/auth"
 	"github.com/steveknoblock/hatcheck-go/internal/cas"
 	"github.com/steveknoblock/hatcheck-go/internal/metadata"
 	"github.com/steveknoblock/hatcheck-go/internal/share"
 )
 
-func stashHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store) {
+// Perm constants define the operations a capability may authorize.
+const (
+	PermRead  = "read"
+	PermWrite = "write"
+	PermAdmin = "admin"
+)
+
+// resolveEmail returns email if non-empty, otherwise backfills it from the
+// principal's own capability history. RequireAuth only populates Email when
+// Stytch's session validation takes its remote path (see
+// internal/auth.ValidateSessionJWT) — the fast local-JWT path it uses for
+// most requests has no user record to read email from, so most
+// write-capability issuance would otherwise carry no email at all even
+// though the same principal's login-issued read capability does (login
+// always calls Stytch's remote AuthenticateMagicLink). Email carries no
+// authority here regardless — this is purely a display-field backfill and
+// changes nothing about who is allowed to do what.
+func resolveEmail(meta *metadata.Store, principal, email string) string {
+	if email != "" || principal == "" {
+		return email
+	}
+	caps := meta.CapabilitiesForPrincipal(principal)
+	for i := len(caps) - 1; i >= 0; i-- {
+		if caps[i].Email != "" {
+			return caps[i].Email
+		}
+	}
+	return ""
+}
+
+// stashAndIssue stores content in the CAS, records it in the metadata log,
+// issues a bound write capability for the resulting hash tied to the
+// creating principal, and returns both the hash and the capability.
+// It is the single point of ownership establishment for all creation operations.
+func stashAndIssue(
+	store *cas.Store,
+	meta *metadata.Store,
+	key []byte,
+	content string,
+	principal string,
+	email string,
+	expiry time.Duration,
+	appendMeta func(hash string) error,
+) (string, metadata.CapabilityPayload, error) {
+	hash, err := store.Stash(content)
+	if err != nil {
+		return "", metadata.CapabilityPayload{}, fmt.Errorf("failed to stash content: %w", err)
+	}
+
+	if err := appendMeta(hash); err != nil {
+		log.Printf("warning: failed to append metadata for %s: %v", hash, err)
+	}
+
+	email = resolveEmail(meta, principal, email)
+
+	expires := time.Now().UTC().Add(expiry)
+	cap := metadata.SignCapability(key, hash, PermWrite, principal, email, expires)
+	if err := meta.AppendCapability(cap); err != nil {
+		log.Printf("warning: failed to record capability for %s: %v", hash, err)
+	}
+
+	return hash, cap, nil
+}
+
+// stashResponse is the JSON shape returned by all creation endpoints.
+type stashResponse struct {
+	Hash       string                     `json:"hash"`
+	Capability metadata.CapabilityPayload `json:"capability"`
+}
+
+func stashHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, key []byte, cfg Config, vr VerifiedRequest) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -30,21 +102,23 @@ func stashHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, me
 
 	content := string(body)
 
-	hash, err := store.Stash(content)
+	hash, cap, err := stashAndIssue(store, meta, key, content, vr.Principal, vr.Email, cfg.CapabilityExpiry,
+		func(hash string) error {
+			return meta.AppendStash(hash, len(body), content)
+		},
+	)
 	if err != nil {
+		log.Printf("stash error: %v", err)
 		http.Error(w, "failed to stash content", http.StatusInternalServerError)
 		return
 	}
 
-	if err := meta.AppendStash(hash, len(body), content); err != nil {
-		log.Printf("warning: failed to append metadata for %s: %v", hash, err)
-	}
-
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	fmt.Fprintf(w, "%s\n", hash)
+	json.NewEncoder(w).Encode(stashResponse{Hash: hash, Capability: cap})
 }
 
-func fetchHandler(w http.ResponseWriter, req *http.Request, store *cas.Store) {
+func fetchHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, vr VerifiedRequest) {
 	if req.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -53,6 +127,13 @@ func fetchHandler(w http.ResponseWriter, req *http.Request, store *cas.Store) {
 	hash := req.URL.Query().Get("hash")
 	if hash == "" {
 		http.Error(w, "missing hash parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Verify the capability covers the requested hash.
+	// A wildcard hash "*" grants access to all objects.
+	if vr.Capability.Hash != "*" && vr.Capability.Hash != hash {
+		http.Error(w, "capability does not cover this object", http.StatusForbidden)
 		return
 	}
 
@@ -66,14 +147,13 @@ func fetchHandler(w http.ResponseWriter, req *http.Request, store *cas.Store) {
 	fmt.Fprintf(w, "%s\n", data)
 }
 
-func listHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store) {
+func listHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, vr VerifiedRequest) {
 	if req.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	hashes, err := store.List()
-
 	if err != nil {
 		http.Error(w, "failed to list objects", http.StatusInternalServerError)
 		return
@@ -100,7 +180,7 @@ func listHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, met
 	json.NewEncoder(w).Encode(result)
 }
 
-func queryHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store) {
+func queryHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, vr VerifiedRequest) {
 	if req.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -122,7 +202,7 @@ func queryHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store
 
 // namespacesHandler returns all unique namespace prefixes in the name index.
 // GET /namespaces
-func namespacesHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store) {
+func namespacesHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, vr VerifiedRequest) {
 	if req.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -139,7 +219,7 @@ func namespacesHandler(w http.ResponseWriter, req *http.Request, meta *metadata.
 
 // namesHandler returns all Names in a namespace with the prefix stripped.
 // GET /names?namespace=bob
-func namesHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store) {
+func namesHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, vr VerifiedRequest) {
 	if req.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -162,7 +242,7 @@ func namesHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store
 
 // nameHandler creates or updates a Name in the metadata store.
 // POST /name?label=my-document&hash=a1b2c3&namespace=bob
-func nameHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store) {
+func nameHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, vr VerifiedRequest) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -172,34 +252,38 @@ func nameHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store)
 	label := req.URL.Query().Get("label")
 	hash := req.URL.Query().Get("hash")
 
-	if label == "" || hash == "" {
-		http.Error(w, "missing label or hash parameter", http.StatusBadRequest)
+	if namespace == "" || label == "" || hash == "" {
+		http.Error(w, "missing namespace, label, or hash parameter", http.StatusBadRequest)
 		return
 	}
 
-	// Prepend namespace if provided.
-	fullLabel := label
-	if namespace != "" {
-		fullLabel = namespace + "/" + label
+	// Verify the capability covers the named hash.
+	// A wildcard hash "*" grants access to all objects.
+	if vr.Capability.Hash != "*" && vr.Capability.Hash != hash {
+		http.Error(w, "capability does not cover this object", http.StatusForbidden)
+		return
 	}
 
-	// Try create first, fall back to update.
+	fullLabel := namespace + "/" + label
+
+	// Try to create the name. If it already exists, update it instead.
 	err := meta.AppendNameCreate(fullLabel, hash)
 	if err != nil {
-		// Name already exists — update it.
-		if err := meta.AppendNameUpdate(fullLabel, hash); err != nil {
-			http.Error(w, "failed to update name: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
+		err = meta.AppendNameUpdate(fullLabel, hash)
+	}
+	if err != nil {
+		http.Error(w, "failed to record name: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "%s\n", fullLabel)
+	fmt.Fprintf(w, "%s -> %s\n", fullLabel, hash)
 }
 
-// collectionHandler stashes a Collection object and returns its hash.
+// collectionHandler stores a JSON array of hashes as a CAS object,
+// records it in metadata, issues a write capability, and returns both.
 // POST /collection — body is a JSON array of hashes
-func collectionHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store) {
+func collectionHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, key []byte, cfg Config, vr VerifiedRequest) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -212,91 +296,78 @@ func collectionHandler(w http.ResponseWriter, req *http.Request, store *cas.Stor
 	}
 	defer req.Body.Close()
 
-	// Validate that the body is a JSON array of strings.
 	var hashes []string
 	if err := json.Unmarshal(body, &hashes); err != nil {
-		http.Error(w, "body must be a JSON array of hashes", http.StatusBadRequest)
+		http.Error(w, "body must be a JSON array of hash strings", http.StatusBadRequest)
 		return
 	}
 
 	content := string(body)
-	hash, err := store.Stash(content)
+
+	hash, cap, err := stashAndIssue(store, meta, key, content, vr.Principal, vr.Email, cfg.CapabilityExpiry,
+		func(hash string) error {
+			return meta.AppendCollection(hash, hashes)
+		},
+	)
 	if err != nil {
-		http.Error(w, "failed to stash collection", http.StatusInternalServerError)
+		log.Printf("collection error: %v", err)
+		http.Error(w, "failed to store collection", http.StatusInternalServerError)
 		return
 	}
 
-	if err := meta.AppendCollection(hash, hashes); err != nil {
-		log.Printf("warning: failed to append collection metadata for %s: %v", hash, err)
-	}
-
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	fmt.Fprintf(w, "%s\n", hash)
+	json.NewEncoder(w).Encode(stashResponse{Hash: hash, Capability: cap})
 }
 
-// relationHandler stashes a Relation object and logs it to the metadata store.
-// POST /relation?from=<hash>&rel=<predicate>&to=<hash>
-//
-// The relation JSON is stored as a CAS object (immutable, addressable by hash)
-// and also appended to the metadata log for indexing. Both from and to must be
-// non-empty; rel is the predicate drawn from the tag vocabulary.
-func relationHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store) {
+// relationHandler stores a typed link between two hashes as a CAS object,
+// records it in metadata, issues a write capability, and returns both.
+// POST /relation — body is JSON {"from":"<hash>","rel":"<type>","to":"<hash>"}
+func relationHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, key []byte, cfg Config, vr VerifiedRequest) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	from := req.URL.Query().Get("from")
-	rel := req.URL.Query().Get("rel")
-	to := req.URL.Query().Get("to")
-
-	if from == "" || rel == "" || to == "" {
-		http.Error(w, "missing from, rel, or to parameter", http.StatusBadRequest)
-		return
-	}
-
-	// Build the relation JSON — this is the CAS object content.
-	type relationObject struct {
-		From string `json:"from"`
-		Rel  string `json:"rel"`
-		To   string `json:"to"`
-	}
-	content, err := json.Marshal(relationObject{From: from, Rel: rel, To: to})
+	body, err := io.ReadAll(req.Body)
 	if err != nil {
-		http.Error(w, "failed to marshal relation", http.StatusInternalServerError)
+		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		return
+	}
+	defer req.Body.Close()
+
+	var rel metadata.RelationPayload
+	if err := json.Unmarshal(body, &rel); err != nil {
+		http.Error(w, `body must be JSON: {"from":"<hash>","rel":"<type>","to":"<hash>"}`, http.StatusBadRequest)
 		return
 	}
 
-	// Stash as a CAS object — the relation is immutable content like any other.
-	hash, err := store.Stash(string(content))
+	if rel.From == "" || rel.Rel == "" || rel.To == "" {
+		http.Error(w, "from, rel, and to are all required", http.StatusBadRequest)
+		return
+	}
+
+	content := string(body)
+
+	hash, cap, err := stashAndIssue(store, meta, key, content, vr.Principal, vr.Email, cfg.CapabilityExpiry,
+		func(hash string) error {
+			return meta.AppendRelation(hash, rel.From, rel.Rel, rel.To)
+		},
+	)
 	if err != nil {
-		http.Error(w, "failed to stash relation", http.StatusInternalServerError)
+		log.Printf("relation error: %v", err)
+		http.Error(w, "failed to store relation", http.StatusInternalServerError)
 		return
 	}
 
-	// Log to metadata store for indexing by from, to, and rel.
-	if err := meta.AppendRelation(hash, from, rel, to); err != nil {
-		log.Printf("warning: failed to append relation metadata for %s: %v", hash, err)
-	}
-
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	fmt.Fprintf(w, "%s\n", hash)
+	json.NewEncoder(w).Encode(stashResponse{Hash: hash, Capability: cap})
 }
 
-// relationsHandler returns all outgoing and incoming relations for a given hash.
+// relationsHandler returns all relations for the given hash.
 // GET /relations?hash=<hash>
-//
-// Response shape:
-//
-//	{
-//	  "outgoing": [{"hash":"...","from":"...","rel":"...","to":"..."}, ...],
-//	  "incoming": [{"hash":"...","from":"...","rel":"...","to":"..."}, ...]
-//	}
-//
-// Both arrays are always present, empty when no relations exist.
-// This endpoint returns structured relation data rather than hashes alone,
-// so the UI can display and navigate the syndetic web without additional fetches.
-func relationsHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store) {
+func relationsHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, vr VerifiedRequest) {
 	if req.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -310,7 +381,6 @@ func relationsHandler(w http.ResponseWriter, req *http.Request, meta *metadata.S
 
 	outgoing, incoming := meta.RelationsForHash(hash)
 
-	// Ensure non-nil slices so the JSON encodes as [] not null.
 	if outgoing == nil {
 		outgoing = []metadata.RelationPayload{}
 	}
@@ -332,11 +402,7 @@ func relationsHandler(w http.ResponseWriter, req *http.Request, meta *metadata.S
 
 // tagsHandler returns all known tag keys from the tag index.
 // GET /tags
-//
-// Used by the UI to populate the relation type autocomplete picker.
-// The tag vocabulary is derived entirely from #hashtags in stashed content,
-// so it grows organically as the user creates documents.
-func tagsHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store) {
+func tagsHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, vr VerifiedRequest) {
 	if req.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -354,7 +420,7 @@ func tagsHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store)
 // exportHandler streams a tar.gz archive to the client.
 // GET /export?source=bob
 // GET /export?source=bob&name=my-document
-func exportHandler(w http.ResponseWriter, req *http.Request, objPath, metaPath string) {
+func exportHandler(w http.ResponseWriter, req *http.Request, objPath, metaPath string, vr VerifiedRequest) {
 	if req.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -368,7 +434,6 @@ func exportHandler(w http.ResponseWriter, req *http.Request, objPath, metaPath s
 		return
 	}
 
-	// Write archive to a temp file then stream it.
 	tmp, err := os.CreateTemp("", "hatcheck-export-*.tar.gz")
 	if err != nil {
 		http.Error(w, "failed to create temp file", http.StatusInternalServerError)
@@ -390,13 +455,12 @@ func exportHandler(w http.ResponseWriter, req *http.Request, objPath, metaPath s
 
 // importHandler accepts a tar.gz archive as the request body and imports it.
 // POST /import
-func importHandler(w http.ResponseWriter, req *http.Request, objPath, metaPath string) {
+func importHandler(w http.ResponseWriter, req *http.Request, objPath, metaPath string, vr VerifiedRequest) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Write body to a temp file.
 	tmp, err := os.CreateTemp("", "hatcheck-import-*.tar.gz")
 	if err != nil {
 		http.Error(w, "failed to create temp file", http.StatusInternalServerError)
@@ -420,85 +484,134 @@ func importHandler(w http.ResponseWriter, req *http.Request, objPath, metaPath s
 	fmt.Fprintln(w, "import successful")
 }
 
-func main() {
-	objPath := os.Getenv("HATCHECK_DATA")
-	if objPath == "" {
-		objPath = "./objects"
+// issueHandler creates and signs a new capability for the given principal,
+// records it in the log, and returns the serialized CapabilityPayload to the
+// caller. Only principals with PermAdmin may issue capabilities.
+// POST /capability?hash=<hash>&perm=<perm>&principal=<principal>&expires=<RFC3339>
+func issueHandler(w http.ResponseWriter, req *http.Request, key []byte, meta *metadata.Store, vr VerifiedRequest) {
+	if req.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
 
-	uiPath := os.Getenv("HATCHECK_UI")
-	if uiPath == "" {
-		uiPath = "./ui"
+	hash := req.URL.Query().Get("hash")
+	perm := req.URL.Query().Get("perm")
+	principal := req.URL.Query().Get("principal")
+	expiresStr := req.URL.Query().Get("expires")
+	email := req.URL.Query().Get("email") // optional — empty if user has not opted in
+
+	if hash == "" || perm == "" || principal == "" || expiresStr == "" {
+		http.Error(w, "missing required parameter: hash, perm, principal, expires", http.StatusBadRequest)
+		return
 	}
 
-	metaPath := os.Getenv("HATCHECK_META")
-	if metaPath == "" {
-		metaPath = "./metadata"
+	// Validate perm is a known value.
+	// Admin capabilities can only be issued via the bootstrap token (no
+	// capability present in the request). Regular issuance is limited to
+	// read or write to prevent privilege escalation.
+	if perm != PermRead && perm != PermWrite {
+		if perm == PermAdmin && vr.Capability.ID == "" {
+			// Bootstrap path — admin issuance permitted.
+		} else {
+			http.Error(w, "perm must be read or write", http.StatusBadRequest)
+			return
+		}
 	}
 
-	// Create the CAS store.
-	store, err := cas.New(objPath,
-		func(content string) string {
-			sum := md5.Sum([]byte(content))
-			return hex.EncodeToString(sum[:])
-		},
-	)
+	expires, err := time.Parse(time.RFC3339, expiresStr)
 	if err != nil {
-		log.Fatalf("failed to create CAS store: %v", err)
+		http.Error(w, "expires must be in RFC3339 format", http.StatusBadRequest)
+		return
 	}
 
-	// Create the metadata store.
-	meta, err := metadata.New(metaPath,
+	if expires.Before(time.Now().UTC()) {
+		http.Error(w, "expires must be in the future", http.StatusBadRequest)
+		return
+	}
+
+	cap := metadata.SignCapability(key, hash, perm, principal, email, expires)
+
+	if err := meta.AppendCapability(cap); err != nil {
+		http.Error(w, "failed to record capability: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(cap)
+}
+
+// revokeHandler records the revocation of a capability and updates the live
+// revocation index. The capability ID is required; reason is optional.
+// POST /capability/revoke?id=<capability-id>&reason=<reason>
+func revokeHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, revoked *metadata.RevokedSet, vr VerifiedRequest) {
+	if req.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	id := req.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, "missing id parameter", http.StatusBadRequest)
+		return
+	}
+
+	reason := req.URL.Query().Get("reason")
+
+	if err := meta.AppendCapabilityRevoke(id, reason, revoked); err != nil {
+		http.Error(w, "failed to record revocation: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, "capability %s revoked\n", id)
+}
+
+func main() {
+	cfg := LoadConfig()
+
+	// Initialise the CAS with an MD5 hash function.
+	store, err := cas.New(cfg.ObjPath, func(content string) string {
+		sum := md5.Sum([]byte(content))
+		return hex.EncodeToString(sum[:])
+	})
+	if err != nil {
+		log.Fatalf("failed to initialise object store: %v", err)
+	}
+
+	meta, err := metadata.New(cfg.MetaPath,
 		metadata.NewTagIndex(),
 		metadata.NewDateIndex(),
 		metadata.NewNameIndex(),
 		metadata.NewRelationIndex(),
+		metadata.NewCapabilityIndex(),
 	)
 	if err != nil {
-		log.Fatalf("failed to create metadata store: %v", err)
+		log.Fatalf("failed to load metadata store: %v", err)
 	}
 
-	http.HandleFunc("/stash", func(w http.ResponseWriter, req *http.Request) {
-		stashHandler(w, req, store, meta)
-	})
-	http.HandleFunc("/fetch", func(w http.ResponseWriter, req *http.Request) {
-		fetchHandler(w, req, store)
-	})
-	http.HandleFunc("/list", func(w http.ResponseWriter, req *http.Request) {
-		listHandler(w, req, store, meta)
-	})
-	http.HandleFunc("/query", func(w http.ResponseWriter, req *http.Request) {
-		queryHandler(w, req, meta)
-	})
-	http.HandleFunc("/namespaces", func(w http.ResponseWriter, req *http.Request) {
-		namespacesHandler(w, req, meta)
-	})
-	http.HandleFunc("/names", func(w http.ResponseWriter, req *http.Request) {
-		namesHandler(w, req, meta)
-	})
-	http.HandleFunc("/name", func(w http.ResponseWriter, req *http.Request) {
-		nameHandler(w, req, meta)
-	})
-	http.HandleFunc("/collection", func(w http.ResponseWriter, req *http.Request) {
-		collectionHandler(w, req, store, meta)
-	})
-	http.HandleFunc("/relation", func(w http.ResponseWriter, req *http.Request) {
-		relationHandler(w, req, store, meta)
-	})
-	http.HandleFunc("/relations", func(w http.ResponseWriter, req *http.Request) {
-		relationsHandler(w, req, meta)
-	})
-	http.HandleFunc("/tags", func(w http.ResponseWriter, req *http.Request) {
-		tagsHandler(w, req, meta)
-	})
-	http.HandleFunc("/export", func(w http.ResponseWriter, req *http.Request) {
-		exportHandler(w, req, objPath, metaPath)
-	})
-	http.HandleFunc("/import", func(w http.ResponseWriter, req *http.Request) {
-		importHandler(w, req, objPath, metaPath)
-	})
+	// Build revocation index from log at startup.
+	revoked := metadata.NewRevokedSet()
+	if err := meta.BuildRevokedSet(revoked); err != nil {
+		log.Fatalf("failed to build revocation index: %v", err)
+	}
 
-	http.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.Dir(uiPath))))
+	cm := &CapabilityMiddleware{
+		Key:            cfg.SigningKey,
+		Revoked:        revoked,
+		BootstrapToken: cfg.BootstrapToken,
+	}
+
+	// Initialise the Stytch auth client.
+	authClient, err := auth.NewClient()
+	if err != nil {
+		log.Fatalf("failed to initialise auth client: %v", err)
+	}
+
+	am := &AuthMiddleware{Client: authClient}
+	rl := NewRateLimiters(cfg)
+
+	registerRoutes(store, meta, am, cm, rl, authClient, cfg)
 
 	log.Println("starting server on :8090")
 	if err := http.ListenAndServe(":8090", nil); err != nil {

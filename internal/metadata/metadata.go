@@ -197,6 +197,155 @@ func (s *Store) AppendNameUpdate(label, hash string) error {
 	})
 }
 
+// AppendCapability records a newly issued capability in the log.
+func (s *Store) AppendCapability(cap CapabilityPayload) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	payload, err := json.Marshal(cap)
+	if err != nil {
+		return err
+	}
+
+	return s.append(Entry{
+		Op:      OpCapability,
+		Created: time.Now().UTC(),
+		Payload: payload,
+	})
+}
+
+// AppendCapabilityRevoke records the revocation of a capability in the log
+// and immediately updates the live RevokedSet so the change takes effect
+// without requiring a server restart.
+func (s *Store) AppendCapabilityRevoke(id, reason string, revoked *RevokedSet) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	payload, err := json.Marshal(CapabilityRevokePayload{
+		ID:      id,
+		Reason:  reason,
+		Revoked: time.Now().UTC(),
+	})
+	if err != nil {
+		return err
+	}
+
+	if err := s.append(Entry{
+		Op:      OpCapabilityRevoke,
+		Created: time.Now().UTC(),
+		Payload: payload,
+	}); err != nil {
+		return err
+	}
+
+	// Update the live set only after the log is durably written.
+	revoked.Add(id)
+	return nil
+}
+
+// BuildRevokedSet walks the in-memory log and populates the provided RevokedSet
+// with the ID of every capability that has been explicitly revoked.
+// It also prunes IDs whose capabilities have already naturally expired,
+// since they no longer need to be checked.
+func (s *Store) BuildRevokedSet(revoked *RevokedSet) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Build a map of capability expiry times keyed by ID so we can
+	// skip revocations for already-expired capabilities.
+	expiry := make(map[string]time.Time)
+	for _, entry := range s.Log {
+		if entry.Op != OpCapability {
+			continue
+		}
+		var cap CapabilityPayload
+		if err := json.Unmarshal(entry.Payload, &cap); err != nil {
+			continue
+		}
+		expiry[cap.ID] = cap.Expires
+	}
+
+	now := time.Now().UTC()
+	for _, entry := range s.Log {
+		if entry.Op != OpCapabilityRevoke {
+			continue
+		}
+		var p CapabilityRevokePayload
+		if err := json.Unmarshal(entry.Payload, &p); err != nil {
+			continue
+		}
+		// Only add to the revoked set if the capability has not already expired.
+		if exp, ok := expiry[p.ID]; !ok || exp.UTC().After(now) {
+			revoked.Add(p.ID)
+		}
+	}
+
+	return nil
+}
+
+// --- Capability queries ---
+
+// CapabilitiesForPrincipal returns every capability ever issued to a given
+// principal, in issuance order. Pass "" to retrieve bearer-token
+// capabilities (those issued with no bound principal). This does not filter
+// out revoked or expired capabilities — callers that need current validity
+// should join the result against a RevokedSet and check Expires themselves,
+// the same way CapabilityMiddleware.Protect does at verification time.
+func (s *Store) CapabilitiesForPrincipal(principal string) []CapabilityPayload {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if idx, ok := s.indexMap["capability"]; ok {
+		if cq, ok := idx.(CapabilityQuerier); ok {
+			return cq.QueryRich(principal)
+		}
+	}
+	return []CapabilityPayload{}
+}
+
+// AllCapabilities returns every capability ever issued, in log order.
+func (s *Store) AllCapabilities() []CapabilityPayload {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if idx, ok := s.indexMap["capability"]; ok {
+		if cq, ok := idx.(CapabilityQuerier); ok {
+			return cq.All()
+		}
+	}
+	return []CapabilityPayload{}
+}
+
+// CapabilityByID returns a single capability by its ID, if one was ever
+// issued with that ID.
+func (s *Store) CapabilityByID(id string) (CapabilityPayload, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if idx, ok := s.indexMap["capability"]; ok {
+		if cq, ok := idx.(CapabilityQuerier); ok {
+			return cq.ByID(id)
+		}
+	}
+	return CapabilityPayload{}, false
+}
+
+// Principals returns all distinct principals that have been issued at least
+// one bound capability. This is Hatcheck's closest thing to a user
+// directory — there is no separate user table; a "user" is simply a
+// principal string that has shown up on an issued capability.
+func (s *Store) Principals() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if idx, ok := s.indexMap["capability"]; ok {
+		if cq, ok := idx.(CapabilityQuerier); ok {
+			return cq.Principals()
+		}
+	}
+	return []string{}
+}
+
 // --- Query ---
 
 // Query returns results from the named index for the given key.

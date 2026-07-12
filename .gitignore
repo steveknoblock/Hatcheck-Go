@@ -1,5 +1,6 @@
 # Hatcheck
 hatcheck
+hatcheck-server
 /objects/
 /metadata/
 
@@ -8,9 +9,7 @@ hatcheck
 *.code-workspace
 .markdownlint.json
 
-# local env files
-.env*.local
-
-# macOS
-.DS_Store
-*.pem
+# Environment files
+.env
+.env.*
+!.env.example
