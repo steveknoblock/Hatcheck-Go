@@ -258,6 +258,7 @@
         <div class="tab active" data-tab="principals" onclick="switchTab('principals')">Principals</div>
         <div class="tab" data-tab="capabilities" onclick="switchTab('capabilities')">Capabilities</div>
         <div class="tab" data-tab="issue" onclick="switchTab('issue')">Issue capability</div>
+        <div class="tab" data-tab="roles" onclick="switchTab('roles')">Roles</div>
         <div class="tab" data-tab="config" onclick="switchTab('config')">Config</div>
     </div>
 
@@ -344,6 +345,57 @@
             <button class="btn btn-primary" onclick="issueCapability()" id="issue-btn">Issue capability</button>
         </div>
         <div class="result-box" id="issue-result"></div>
+    </div>
+
+    <!-- ── Roles ── -->
+    <div class="panel" id="panel-roles">
+        <div class="section-head">
+            <div>
+                <div class="section-title">Roles</div>
+                <div class="section-sub">Role assignments are an administrative label — they record why capabilities were issued. The role never appears in a capability token; access is always verified by individual capabilities.</div>
+            </div>
+            <button class="btn" onclick="loadRoles()">Refresh</button>
+        </div>
+
+        <!-- Assign / revoke form -->
+        <div class="form-grid" style="margin-bottom:20px">
+            <div class="field">
+                <label>Principal</label>
+                <input class="field-input mono" id="role-principal" placeholder="Stytch user ID">
+            </div>
+            <div class="field">
+                <label>Role</label>
+                <input class="field-input" id="role-name" placeholder="e.g. editor, viewer, admin">
+            </div>
+            <div class="field full">
+                <label>Reason <span class="field-hint">(optional, stored in audit log)</span></label>
+                <input class="field-input" id="role-reason" placeholder="e.g. joined project, initial setup">
+            </div>
+        </div>
+        <div class="form-actions" style="margin-bottom:24px">
+            <button class="btn btn-primary" onclick="assignRole()">Assign role</button>
+            <button class="btn btn-danger" onclick="revokeRole()">Remove role</button>
+        </div>
+
+        <!-- Filter and table -->
+        <div class="section-head" style="margin-top:8px">
+            <div class="filter-row">
+                <input class="field-input" id="role-filter-principal" placeholder="Filter by principal…"
+                       onkeydown="if(event.key==='Enter') loadRoles()">
+                <input class="field-input" id="role-filter-role" placeholder="Filter by role…"
+                       onkeydown="if(event.key==='Enter') loadRoles()">
+                <button class="btn" onclick="loadRoles()">Filter</button>
+                <button class="btn" onclick="clearRoleFilter()">Show all</button>
+            </div>
+        </div>
+        <table>
+            <thead>
+                <tr><th>Principal / Role</th><th>Members / Roles held</th></tr>
+            </thead>
+            <tbody id="roles-body">
+                <tr><td colspan="2" class="empty-state">Not loaded yet.</td></tr>
+            </tbody>
+        </table>
     </div>
 
     <!-- ── Config ── -->
@@ -497,10 +549,12 @@ async function verifyCredential() {
             // whichever tab is currently visible.
             principalsLoaded = false;
             capabilitiesLoaded = false;
+            rolesLoaded = false;
             configLoaded = false;
             const activePanel = document.querySelector('.panel.active');
             if (activePanel && activePanel.id === 'panel-principals') loadPrincipals();
             if (activePanel && activePanel.id === 'panel-capabilities') loadCapabilities();
+            if (activePanel && activePanel.id === 'panel-roles') loadRoles();
             if (activePanel && activePanel.id === 'panel-config') loadConfig();
             return true;
         }
@@ -522,6 +576,7 @@ function switchTab(name) {
     document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === `panel-${name}`));
     if (name === 'principals' && !principalsLoaded) loadPrincipals();
     if (name === 'capabilities' && !capabilitiesLoaded) loadCapabilities();
+    if (name === 'roles' && !rolesLoaded) loadRoles();
     if (name === 'config' && !configLoaded) loadConfig();
 }
 
@@ -677,6 +732,147 @@ async function issueCapability() {
     } finally {
         btn.disabled = false;
         btn.textContent = 'Issue capability';
+    }
+}
+
+// ── Roles ──
+let rolesLoaded = false;
+
+function clearRoleFilter() {
+    document.getElementById('role-filter-principal').value = '';
+    document.getElementById('role-filter-role').value = '';
+    loadRoles();
+}
+
+async function loadRoles() {
+    const filterPrincipal = document.getElementById('role-filter-principal').value.trim();
+    const filterRole      = document.getElementById('role-filter-role').value.trim();
+    const body = document.getElementById('roles-body');
+    body.innerHTML = '<tr><td colspan="2" class="empty-state">Loading…</td></tr>';
+
+    try {
+        let rows = '';
+
+        if (filterPrincipal) {
+            // Show roles held by a specific principal.
+            const res = await adminFetch(`${API}/roles?principal=${encodeURIComponent(filterPrincipal)}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const roles = await res.json();
+            if (!roles.length) {
+                body.innerHTML = `<tr><td colspan="2" class="empty-state">${escHtml(filterPrincipal)} holds no roles.</td></tr>`;
+                rolesLoaded = true;
+                return;
+            }
+            rows = roles.map(role => `
+                <tr>
+                    <td class="mono">${escHtml(filterPrincipal)}</td>
+                    <td><span class="perm-badge">${escHtml(role)}</span></td>
+                </tr>
+            `).join('');
+
+        } else if (filterRole) {
+            // Show principals holding a specific role.
+            const res = await adminFetch(`${API}/roles?role=${encodeURIComponent(filterRole)}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const principals = await res.json();
+            if (!principals.length) {
+                body.innerHTML = `<tr><td colspan="2" class="empty-state">No principals hold the role "${escHtml(filterRole)}".</td></tr>`;
+                rolesLoaded = true;
+                return;
+            }
+            rows = principals.map(p => `
+                <tr>
+                    <td class="mono clickable" onclick="viewPrincipalRoles('${escAttr(p)}')">${escHtml(p)}</td>
+                    <td><span class="perm-badge">${escHtml(filterRole)}</span></td>
+                </tr>
+            `).join('');
+
+        } else {
+            // Show all active roles with their member counts.
+            const res = await adminFetch(`${API}/roles`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const roles = await res.json();
+            if (!roles.length) {
+                body.innerHTML = '<tr><td colspan="2" class="empty-state">No roles have been assigned yet.</td></tr>';
+                rolesLoaded = true;
+                return;
+            }
+            // Fetch member counts in parallel.
+            const counts = await Promise.all(roles.map(async role => {
+                try {
+                    const r = await adminFetch(`${API}/roles?role=${encodeURIComponent(role)}`);
+                    if (!r.ok) return 0;
+                    const members = await r.json();
+                    return members.length;
+                } catch { return 0; }
+            }));
+            rows = roles.map((role, i) => `
+                <tr>
+                    <td><span class="perm-badge">${escHtml(role)}</span></td>
+                    <td class="clickable" onclick="viewRoleMembers('${escAttr(role)}')">${counts[i]} member${counts[i] !== 1 ? 's' : ''} →</td>
+                </tr>
+            `).join('');
+        }
+
+        body.innerHTML = rows;
+        rolesLoaded = true;
+    } catch (err) {
+        body.innerHTML = `<tr><td colspan="2" class="empty-state">Failed to load: ${escHtml(err.message)}</td></tr>`;
+    }
+}
+
+function viewPrincipalRoles(principal) {
+    document.getElementById('role-filter-principal').value = principal;
+    document.getElementById('role-filter-role').value = '';
+    loadRoles();
+}
+
+function viewRoleMembers(role) {
+    document.getElementById('role-filter-role').value = role;
+    document.getElementById('role-filter-principal').value = '';
+    loadRoles();
+}
+
+async function assignRole() {
+    const principal = document.getElementById('role-principal').value.trim();
+    const role      = document.getElementById('role-name').value.trim();
+    const reason    = document.getElementById('role-reason').value.trim();
+    if (!principal || !role) {
+        showToast('Missing fields', 'Principal and role are required.', true);
+        return;
+    }
+    const params = new URLSearchParams({ principal, role });
+    if (reason) params.set('reason', reason);
+    try {
+        const res = await adminFetch(`${API}/role/assign?${params.toString()}`, { method: 'POST' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+        showToast('Role assigned', `${role} → ${principal}`);
+        rolesLoaded = false;
+        loadRoles();
+    } catch (err) {
+        showToast('Assign failed', err.message, true);
+    }
+}
+
+async function revokeRole() {
+    const principal = document.getElementById('role-principal').value.trim();
+    const role      = document.getElementById('role-name').value.trim();
+    const reason    = document.getElementById('role-reason').value.trim();
+    if (!principal || !role) {
+        showToast('Missing fields', 'Principal and role are required.', true);
+        return;
+    }
+    if (!confirm(`Remove role "${role}" from ${principal}?`)) return;
+    const params = new URLSearchParams({ principal, role });
+    if (reason) params.set('reason', reason);
+    try {
+        const res = await adminFetch(`${API}/role/revoke?${params.toString()}`, { method: 'POST' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+        showToast('Role removed', `${role} removed from ${principal}`);
+        rolesLoaded = false;
+        loadRoles();
+    } catch (err) {
+        showToast('Remove failed', err.message, true);
     }
 }
 

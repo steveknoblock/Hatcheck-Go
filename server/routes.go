@@ -96,5 +96,19 @@ func registerRoutes(
 		configHandler(w, req, cfg, store, meta, vr)
 	})))))
 
+	// Role management — all routes require PermAdmin.
+	// POST /role/assign  — assign a role to a principal
+	// POST /role/revoke  — remove a role from a principal
+	// GET  /roles        — list all active roles, filtered by ?principal= or ?role=
+	http.HandleFunc("/role/assign", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+		roleAssignHandler(w, req, meta, vr)
+	})))))
+	http.HandleFunc("/role/revoke", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+		roleRevokeHandler(w, req, meta, vr)
+	})))))
+	http.HandleFunc("/roles", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+		rolesHandler(w, req, meta, vr)
+	})))))
+
 	http.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.Dir(cfg.UIPath))))
 }
