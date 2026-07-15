@@ -686,7 +686,7 @@ function renderCapabilityRow(cap) {
     const idShort = cap.id ? cap.id.slice(0, 12) + '…' : '';
     const hashDisplay = cap.hash === '*' ? '<em>* (wildcard)</em>' : (cap.hash || '').slice(0, 16) + ((cap.hash || '').length > 16 ? '…' : '');
     const roleDisplay = cap.role
-        ? `<span class="perm-badge clickable" onclick="viewRoleFromCapability('${escAttr(cap.role)}')">${escHtml(cap.role)}</span>`
+        ? `<span class="role clickable" onclick="viewRoleFromCapability('${escAttr(cap.role)}')">${escHtml(cap.role)}</span>`
         : '<span class="field-hint">—</span>';
 
     return `
