@@ -352,29 +352,62 @@
         <div class="section-head">
             <div>
                 <div class="section-title">Roles</div>
-                <div class="section-sub">Role assignments are an administrative label — they record why capabilities were issued. The role never appears in a capability token; access is always verified by individual capabilities.</div>
+                <div class="section-sub">A role is two things: a <strong>definition</strong> (the set of capability grants it carries) and a <strong>membership</strong> (which principals hold it). Assigning a role mints one capability per grant for the principal; removing it revokes them. Editing a role's grants below retroactively applies to everyone who already holds it.</div>
             </div>
             <button class="btn" onclick="loadRoles()">Refresh</button>
         </div>
 
-        <!-- Assign / revoke form -->
+        <!-- Role definition (grants) -->
+        <div class="section-title" style="font-size:14px; margin-bottom:4px">Role definition</div>
+        <div class="section-sub" style="margin-bottom:14px">Grants are the capability templates a role carries. Adding one here immediately issues that capability to every principal currently holding the role below; removing one revokes it from all of them.</div>
+        <div class="form-grid" style="margin-bottom:14px">
+            <div class="field">
+                <label>Role</label>
+                <input class="field-input" id="role-name" placeholder="e.g. editor, viewer, admin" onkeydown="if(event.key==='Enter') loadRoleGrants()">
+            </div>
+            <div class="field">
+                <label>Hash</label>
+                <input class="field-input mono" id="grant-hash" placeholder="Object hash, or * for wildcard">
+            </div>
+            <div class="field">
+                <label>Permission</label>
+                <select class="field-select" id="grant-perm">
+                    <option value="read">read</option>
+                    <option value="write">write</option>
+                </select>
+            </div>
+            <div class="field full">
+                <label>Reason <span class="field-hint">(optional, stored in audit log)</span></label>
+                <input class="field-input" id="grant-reason" placeholder="e.g. editors need write access to shared docs">
+            </div>
+        </div>
+        <div class="form-actions" style="margin-bottom:16px">
+            <button class="btn" onclick="loadRoleGrants()">View grants</button>
+            <button class="btn btn-primary" onclick="addRoleGrant()">Add grant</button>
+        </div>
+        <table style="margin-bottom:28px">
+            <thead><tr><th>Hash</th><th>Perm</th><th style="width:90px"></th></tr></thead>
+            <tbody id="role-grants-body">
+                <tr><td colspan="3" class="empty-state">Type a role above and click "View grants".</td></tr>
+            </tbody>
+        </table>
+
+        <!-- Assign / revoke -->
+        <div class="section-title" style="font-size:14px; margin-bottom:4px">Assign / remove role</div>
+        <div class="section-sub" style="margin-bottom:14px">Uses the role name entered above. Assigning issues capabilities for every grant currently on that role; removing revokes every capability that was issued under it.</div>
         <div class="form-grid" style="margin-bottom:20px">
             <div class="field">
                 <label>Principal</label>
                 <input class="field-input mono" id="role-principal" placeholder="Stytch user ID">
             </div>
             <div class="field">
-                <label>Role</label>
-                <input class="field-input" id="role-name" placeholder="e.g. editor, viewer, admin">
-            </div>
-            <div class="field full">
                 <label>Reason <span class="field-hint">(optional, stored in audit log)</span></label>
                 <input class="field-input" id="role-reason" placeholder="e.g. joined project, initial setup">
             </div>
         </div>
         <div class="form-actions" style="margin-bottom:24px">
-            <button class="btn btn-primary" onclick="assignRole()">Assign role</button>
-            <button class="btn btn-danger" onclick="revokeRole()">Remove role</button>
+            <button class="btn btn-primary" onclick="assignRole()">Assign role above to principal</button>
+            <button class="btn btn-danger" onclick="revokeRole()">Remove role above from principal</button>
         </div>
 
         <!-- Filter and table -->
@@ -830,7 +863,9 @@ function viewPrincipalRoles(principal) {
 function viewRoleMembers(role) {
     document.getElementById('role-filter-role').value = role;
     document.getElementById('role-filter-principal').value = '';
+    document.getElementById('role-name').value = role;
     loadRoles();
+    loadRoleGrants();
 }
 
 async function assignRole() {
@@ -845,8 +880,9 @@ async function assignRole() {
     if (reason) params.set('reason', reason);
     try {
         const res = await adminFetch(`${API}/role/assign?${params.toString()}`, { method: 'POST' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-        showToast('Role assigned', `${role} → ${principal}`);
+        const text = await res.text();
+        if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
+        showToast('Role assigned', text.trim());
         rolesLoaded = false;
         loadRoles();
     } catch (err) {
@@ -862,17 +898,88 @@ async function revokeRole() {
         showToast('Missing fields', 'Principal and role are required.', true);
         return;
     }
-    if (!confirm(`Remove role "${role}" from ${principal}?`)) return;
+    if (!confirm(`Remove role "${role}" from ${principal}? This revokes every capability issued under it.`)) return;
     const params = new URLSearchParams({ principal, role });
     if (reason) params.set('reason', reason);
     try {
         const res = await adminFetch(`${API}/role/revoke?${params.toString()}`, { method: 'POST' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-        showToast('Role removed', `${role} removed from ${principal}`);
+        const text = await res.text();
+        if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
+        showToast('Role removed', text.trim());
         rolesLoaded = false;
         loadRoles();
     } catch (err) {
         showToast('Remove failed', err.message, true);
+    }
+}
+
+// ── Role grants (a role's definition) ──
+
+async function loadRoleGrants() {
+    const role = document.getElementById('role-name').value.trim();
+    const body = document.getElementById('role-grants-body');
+    if (!role) {
+        body.innerHTML = '<tr><td colspan="3" class="empty-state">Type a role above and click "View grants".</td></tr>';
+        return;
+    }
+    body.innerHTML = '<tr><td colspan="3" class="empty-state">Loading…</td></tr>';
+    try {
+        const res = await adminFetch(`${API}/role/grants?role=${encodeURIComponent(role)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const grants = await res.json();
+        if (!grants.length) {
+            body.innerHTML = `<tr><td colspan="3" class="empty-state">Role "${escHtml(role)}" grants nothing yet — add a hash and permission above.</td></tr>`;
+            return;
+        }
+        body.innerHTML = grants.map(g => `
+            <tr>
+                <td class="mono">${g.hash === '*' ? '<em>* (wildcard)</em>' : escHtml(g.hash)}</td>
+                <td><span class="perm-badge perm-${escAttr(g.perm)}">${escHtml(g.perm)}</span></td>
+                <td><button class="btn btn-danger" onclick="removeRoleGrant('${escAttr(g.hash)}', '${escAttr(g.perm)}')">Remove</button></td>
+            </tr>
+        `).join('');
+    } catch (err) {
+        body.innerHTML = `<tr><td colspan="3" class="empty-state">Failed to load: ${escHtml(err.message)}</td></tr>`;
+    }
+}
+
+async function addRoleGrant() {
+    const role   = document.getElementById('role-name').value.trim();
+    const hash   = document.getElementById('grant-hash').value.trim();
+    const perm   = document.getElementById('grant-perm').value;
+    const reason = document.getElementById('grant-reason').value.trim();
+    if (!role || !hash) {
+        showToast('Missing fields', 'Role and hash are required.', true);
+        return;
+    }
+    const params = new URLSearchParams({ role, hash, perm });
+    if (reason) params.set('reason', reason);
+    try {
+        const res = await adminFetch(`${API}/role/grant?${params.toString()}`, { method: 'POST' });
+        const text = await res.text();
+        if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
+        showToast('Grant added', text.trim());
+        loadRoleGrants();
+    } catch (err) {
+        showToast('Add grant failed', err.message, true);
+    }
+}
+
+async function removeRoleGrant(hash, perm) {
+    const role = document.getElementById('role-name').value.trim();
+    if (!role) return;
+    if (!confirm(`Remove grant ${hash}/${perm} from role "${role}"? This revokes it from every current member.`)) return;
+    const reason = document.getElementById('grant-reason').value.trim();
+    const params = new URLSearchParams({ role, hash, perm });
+    if (reason) params.set('reason', reason);
+    try {
+        const res = await adminFetch(`${API}/role/grant/revoke?${params.toString()}`, { method: 'POST' });
+        const text = await res.text();
+        if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
+        showToast('Grant removed', text.trim());
+        loadRoleGrants();
+    } catch (err) {
+        showToast('Remove grant failed', err.message, true);
     }
 }
 
