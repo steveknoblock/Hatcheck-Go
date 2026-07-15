@@ -856,7 +856,7 @@ async function loadRoles() {
             }));
             rows = roles.map((role, i) => `
                 <tr>
-                    <td><span class="perm-badge">${escHtml(role)}</span></td>
+                    <td><span class="role">${escHtml(role)}</span></td>
                     <td class="clickable" onclick="viewRoleMembers('${escAttr(role)}')">${counts[i]} member${counts[i] !== 1 ? 's' : ''} →</td>
                 </tr>
             `).join('');
