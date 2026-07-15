@@ -97,17 +97,29 @@ func registerRoutes(
 	})))))
 
 	// Role management — all routes require PermAdmin.
-	// POST /role/assign  — assign a role to a principal
-	// POST /role/revoke  — remove a role from a principal
-	// GET  /roles        — list all active roles, filtered by ?principal= or ?role=
+	// POST /role/assign        — assign a role to a principal (issues capabilities for its grants)
+	// POST /role/revoke        — remove a role from a principal (revokes capabilities issued under it)
+	// GET  /roles              — list all active roles, filtered by ?principal= or ?role=
+	// POST /role/grant         — add a capability template to a role's definition (issues it to existing members)
+	// POST /role/grant/revoke  — remove a capability template from a role's definition (revokes it from existing members)
+	// GET  /role/grants        — list the capability templates a role currently grants
 	http.HandleFunc("/role/assign", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		roleAssignHandler(w, req, meta, vr)
+		roleAssignHandler(w, req, meta, cm, cfg, vr)
 	})))))
 	http.HandleFunc("/role/revoke", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
-		roleRevokeHandler(w, req, meta, vr)
+		roleRevokeHandler(w, req, meta, cm, cfg, vr)
 	})))))
 	http.HandleFunc("/roles", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		rolesHandler(w, req, meta, vr)
+	})))))
+	http.HandleFunc("/role/grant", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+		roleGrantAddHandler(w, req, meta, cm, cfg, vr)
+	})))))
+	http.HandleFunc("/role/grant/revoke", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+		roleGrantRemoveHandler(w, req, meta, cm, cfg, vr)
+	})))))
+	http.HandleFunc("/role/grants", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+		roleGrantsHandler(w, req, meta, vr)
 	})))))
 
 	http.Handle("/ui/", http.StripPrefix("/ui/", http.FileServer(http.Dir(cfg.UIPath))))
