@@ -814,7 +814,7 @@ async function loadRoles() {
             rows = roles.map(role => `
                 <tr>
                     <td class="mono">${escHtml(filterPrincipal)}</td>
-                    <td><span class="perm-badge">${escHtml(role)}</span></td>
+                    <td><span class="role">${escHtml(role)}</span></td>
                 </tr>
             `).join('');
 
@@ -831,7 +831,7 @@ async function loadRoles() {
             rows = principals.map(p => `
                 <tr>
                     <td class="mono clickable" onclick="viewPrincipalRoles('${escAttr(p)}')">${escHtml(p)}</td>
-                    <td><span class="perm-badge">${escHtml(filterRole)}</span></td>
+                    <td><span class="role">${escHtml(filterRole)}</span></td>
                 </tr>
             `).join('');
 
