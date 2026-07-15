@@ -38,11 +38,21 @@ type CapabilityQuerier interface {
 	Principals() []string
 }
 
-// RoleQuerier is implemented by indexes that support role assignment queries.
+// RoleGrant is a single capability template — a (Hash, Perm) pair — attached
+// to a role's definition. When a principal is assigned the role, one
+// capability is issued per grant on record for it.
+type RoleGrant struct {
+	Hash string `json:"hash"`
+	Perm string `json:"perm"`
+}
+
+// RoleQuerier is implemented by indexes that support role assignment and
+// role grant queries.
 type RoleQuerier interface {
 	RolesForPrincipal(principal string) []string
 	PrincipalsForRole(role string) []string
 	Roles() []string
+	GrantsForRole(role string) []RoleGrant
 }
 
 // --- Helpers ---

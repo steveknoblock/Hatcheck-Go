@@ -538,6 +538,104 @@ func (s *Store) Roles() []string {
 	return []string{}
 }
 
+// AppendRoleGrantAdd records that a role's definition grants a capability
+// template (hash+perm) and updates the live RoleIndex immediately. This
+// only defines what the role *means* — it does not by itself issue any
+// capabilities. Retroactively issuing this grant to existing role members
+// is the caller's responsibility (see server/role_capability.go).
+func (s *Store) AppendRoleGrantAdd(role, hash, perm, addedBy, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	payload, err := json.Marshal(RoleGrantPayload{
+		Role:    role,
+		Hash:    hash,
+		Perm:    perm,
+		AddedBy: addedBy,
+		Reason:  reason,
+	})
+	if err != nil {
+		return err
+	}
+
+	return s.append(Entry{
+		Op:      OpRoleGrantAdd,
+		Created: time.Now().UTC(),
+		Payload: payload,
+	})
+}
+
+// AppendRoleGrantRemove records the removal of a capability template from a
+// role's definition and updates the live RoleIndex immediately. This does
+// not by itself revoke anything already issued — the caller is responsible
+// for revoking any live capabilities that were issued under this grant (see
+// server/role_capability.go).
+func (s *Store) AppendRoleGrantRemove(role, hash, perm, removedBy, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	payload, err := json.Marshal(RoleGrantRemovePayload{
+		Role:      role,
+		Hash:      hash,
+		Perm:      perm,
+		RemovedBy: removedBy,
+		Reason:    reason,
+	})
+	if err != nil {
+		return err
+	}
+
+	return s.append(Entry{
+		Op:      OpRoleGrantRemove,
+		Created: time.Now().UTC(),
+		Payload: payload,
+	})
+}
+
+// GrantsForRole returns the capability templates currently defined for the
+// given role — what a principal receives when assigned it.
+func (s *Store) GrantsForRole(role string) []RoleGrant {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if idx, ok := s.indexMap["role"]; ok {
+		if rq, ok := idx.(RoleQuerier); ok {
+			return rq.GrantsForRole(role)
+		}
+	}
+	return []RoleGrant{}
+}
+
+// CapabilitiesForPrincipalRole returns the capabilities issued to principal
+// that are annotated with the given role and are still live — not expired,
+// and not present in revoked (pass nil to skip the revocation check, e.g.
+// when the caller only cares about which grants are already represented
+// regardless of subsequent revocation). Used both to avoid re-issuing a
+// grant a principal already holds, and to find what to revoke when a role
+// or a role's grant is removed.
+//
+// This delegates to CapabilitiesForPrincipal, which takes its own read lock,
+// so it must not be called while s.mu is already held.
+func (s *Store) CapabilitiesForPrincipalRole(principal, role string, revoked *RevokedSet) []CapabilityPayload {
+	all := s.CapabilitiesForPrincipal(principal)
+
+	now := time.Now().UTC()
+	result := make([]CapabilityPayload, 0, len(all))
+	for _, cap := range all {
+		if cap.Role != role {
+			continue
+		}
+		if revoked != nil && revoked.IsRevoked(cap.ID) {
+			continue
+		}
+		if cap.Expires.UTC().Before(now) {
+			continue
+		}
+		result = append(result, cap)
+	}
+	return result
+}
+
 // IndexNames returns the names of all registered indexes.
 func (s *Store) IndexNames() []string {
 	names := make([]string, len(s.indexes))

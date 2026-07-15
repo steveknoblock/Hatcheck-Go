@@ -14,15 +14,25 @@ import "encoding/json"
 // The effective role set for a principal is the set of roles that have
 // been assigned but not subsequently revoked.
 //
-// Two projections are maintained:
+// Two projections are maintained for assignments:
 //
 //	byPrincipal — maps a principal to its current set of role names
 //	byRole      — maps a role name to the set of principals holding it
 //
-// Both are updated together on every Add call so either query is O(1).
+// A third projection, grants, maps a role name to the set of capability
+// templates (Hash, Perm pairs) that role currently grants. This is the
+// role's *definition* — built from OpRoleGrantAdd/OpRoleGrantRemove entries
+// — as distinct from byRole, which is *membership*. Neither projection
+// issues or revokes capabilities itself; RoleIndex only answers "what does
+// this role currently mean" and "who currently holds it." The server layer
+// (see role_capability.go) is what turns those answers into actual
+// capability issuance and revocation.
+//
+// All three are updated together on every Add call so any query is O(1).
 type RoleIndex struct {
-	byPrincipal map[string]map[string]struct{} // principal -> set of role names
-	byRole      map[string]map[string]struct{} // role -> set of principals
+	byPrincipal map[string]map[string]struct{}    // principal -> set of role names
+	byRole      map[string]map[string]struct{}    // role -> set of principals
+	grants      map[string]map[RoleGrant]struct{} // role -> set of capability templates
 }
 
 // NewRoleIndex returns an initialised RoleIndex ready for use.
@@ -30,14 +40,15 @@ func NewRoleIndex() *RoleIndex {
 	return &RoleIndex{
 		byPrincipal: make(map[string]map[string]struct{}),
 		byRole:      make(map[string]map[string]struct{}),
+		grants:      make(map[string]map[RoleGrant]struct{}),
 	}
 }
 
 // Name satisfies the Index interface.
 func (r *RoleIndex) Name() string { return "role" }
 
-// Add processes a log entry. Only OpRoleAssign and OpRoleRevoke entries
-// are handled; all others are silently ignored.
+// Add processes a log entry. Only role-related entries are handled; all
+// others are silently ignored.
 func (r *RoleIndex) Add(entry Entry) {
 	switch entry.Op {
 	case OpRoleAssign:
@@ -52,6 +63,18 @@ func (r *RoleIndex) Add(entry Entry) {
 			return
 		}
 		r.revoke(p.Principal, p.Role)
+	case OpRoleGrantAdd:
+		var p RoleGrantPayload
+		if err := json.Unmarshal(entry.Payload, &p); err != nil {
+			return
+		}
+		r.addGrant(p.Role, p.Hash, p.Perm)
+	case OpRoleGrantRemove:
+		var p RoleGrantRemovePayload
+		if err := json.Unmarshal(entry.Payload, &p); err != nil {
+			return
+		}
+		r.removeGrant(p.Role, p.Hash, p.Perm)
 	}
 }
 
@@ -99,6 +122,17 @@ func (r *RoleIndex) Roles() []string {
 	return result
 }
 
+// GrantsForRole returns the capability templates currently defined for the
+// given role — i.e. what a principal receives when assigned this role.
+func (r *RoleIndex) GrantsForRole(role string) []RoleGrant {
+	g := r.grants[role]
+	result := make([]RoleGrant, 0, len(g))
+	for grant := range g {
+		result = append(result, grant)
+	}
+	return result
+}
+
 // assign adds a role to a principal's set, creating the inner maps as needed.
 func (r *RoleIndex) assign(principal, role string) {
 	if r.byPrincipal[principal] == nil {
@@ -121,5 +155,25 @@ func (r *RoleIndex) revoke(principal, role string) {
 	}
 	if r.byRole[role] != nil {
 		delete(r.byRole[role], principal)
+	}
+}
+
+// addGrant adds a capability template to a role's definition, creating the
+// inner map as needed. A no-op if the exact (hash, perm) pair is already
+// present — RoleGrant is a plain comparable struct, so duplicates collapse
+// naturally via the set.
+func (r *RoleIndex) addGrant(role, hash, perm string) {
+	if r.grants[role] == nil {
+		r.grants[role] = make(map[RoleGrant]struct{})
+	}
+	r.grants[role][RoleGrant{Hash: hash, Perm: perm}] = struct{}{}
+}
+
+// removeGrant removes a capability template from a role's definition. A
+// no-op if the grant does not exist, which can happen on out-of-order replay
+// or a removal written without a matching add.
+func (r *RoleIndex) removeGrant(role, hash, perm string) {
+	if r.grants[role] != nil {
+		delete(r.grants[role], RoleGrant{Hash: hash, Perm: perm})
 	}
 }

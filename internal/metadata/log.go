@@ -32,6 +32,8 @@ const (
 	OpCapabilityRevoke = "capability-revoke"
 	OpRoleAssign       = "role-assign"
 	OpRoleRevoke       = "role-revoke"
+	OpRoleGrantAdd     = "role-grant-add"
+	OpRoleGrantRemove  = "role-grant-remove"
 )
 
 // --- Payload structs ---
@@ -68,6 +70,14 @@ type RelationPayload struct {
 // Email is an optional human-readable annotation stored only when the user
 // has opted in. It is not included in the signing message and carries no
 // authority — Principal is the authoritative identifier for verification.
+//
+// Role is an optional annotation recording which role's grant caused this
+// capability to be issued (empty for capabilities issued directly, e.g. via
+// stash or the /capability endpoint). Like Email, it is excluded from the
+// signing message and carries no authority at verification time — it exists
+// purely so role removal and role-grant removal can find and bulk-revoke
+// the capabilities they issued, without becoming part of the security
+// boundary itself.
 type CapabilityPayload struct {
 	ID        string    `json:"id"`
 	Hash      string    `json:"hash"`
@@ -75,6 +85,7 @@ type CapabilityPayload struct {
 	Expires   time.Time `json:"expires"`
 	Principal string    `json:"principal,omitempty"`
 	Email     string    `json:"email,omitempty"`
+	Role      string    `json:"role,omitempty"`
 	Sig       string    `json:"sig"`
 }
 
@@ -110,6 +121,32 @@ type RoleRevokePayload struct {
 	Principal string `json:"principal"`
 	Role      string `json:"role"`
 	RevokedBy string `json:"revoked_by"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// RoleGrantPayload records that a role's definition grants a capability
+// template — a (Hash, Perm) pair. Hash may be "*" for a wildcard grant.
+// When a principal is assigned Role, one capability is issued per grant
+// currently on record for that role. AddedBy is the admin principal who
+// added the grant, for audit purposes.
+type RoleGrantPayload struct {
+	Role    string `json:"role"`
+	Hash    string `json:"hash"`
+	Perm    string `json:"perm"`
+	AddedBy string `json:"added_by"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+// RoleGrantRemovePayload records the removal of a capability template from
+// a role's definition. It does not by itself revoke anything — the caller
+// is responsible for finding and revoking any capabilities that were issued
+// under this (Role, Hash, Perm) grant, the same way RoleRevokePayload does
+// not itself revoke capabilities.
+type RoleGrantRemovePayload struct {
+	Role      string `json:"role"`
+	Hash      string `json:"hash"`
+	Perm      string `json:"perm"`
+	RemovedBy string `json:"removed_by"`
 	Reason    string `json:"reason,omitempty"`
 }
 
