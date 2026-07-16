@@ -15,6 +15,14 @@ import (
 // live. The assigning principal is taken from the verified session
 // (vr.Principal) for the audit trail.
 //
+// If the principal already holds the role, this is a no-op: no new
+// role-assign log entry is written (RoleIndex membership is already a set,
+// so a duplicate entry would change nothing, only add log noise), and
+// issueCapabilitiesForRole is skipped entirely rather than relying on it to
+// discover there's nothing to do. This is what makes it safe to drag a
+// principal onto a role they already hold in the Assign tab — nothing
+// happens beyond a confirmation message.
+//
 // POST /role/assign?principal=<id>&role=<n>&reason=<text>
 func roleAssignHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, cm *CapabilityMiddleware, cfg Config, vr VerifiedRequest) {
 	if req.Method != http.MethodPost {
@@ -28,6 +36,12 @@ func roleAssignHandler(w http.ResponseWriter, req *http.Request, meta *metadata.
 
 	if principal == "" || role == "" {
 		http.Error(w, "missing required parameter: principal, role", http.StatusBadRequest)
+		return
+	}
+
+	if principalHasRole(meta, principal, role) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, "%s already has role %s — no change made\n", principal, role)
 		return
 	}
 
@@ -50,6 +64,9 @@ func roleAssignHandler(w http.ResponseWriter, req *http.Request, meta *metadata.
 // issued to the principal under that role. The revoking principal is taken
 // from the verified session (vr.Principal) for the audit trail.
 //
+// Symmetric to roleAssignHandler: if the principal doesn't currently hold
+// the role, this is a no-op rather than writing a meaningless revoke entry.
+//
 // POST /role/revoke?principal=<id>&role=<n>&reason=<text>
 func roleRevokeHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, cm *CapabilityMiddleware, cfg Config, vr VerifiedRequest) {
 	if req.Method != http.MethodPost {
@@ -63,6 +80,12 @@ func roleRevokeHandler(w http.ResponseWriter, req *http.Request, meta *metadata.
 
 	if principal == "" || role == "" {
 		http.Error(w, "missing required parameter: principal, role", http.StatusBadRequest)
+		return
+	}
+
+	if !principalHasRole(meta, principal, role) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, "%s does not have role %s — no change made\n", principal, role)
 		return
 	}
 
@@ -246,4 +269,18 @@ func roleGrantsHandler(w http.ResponseWriter, req *http.Request, meta *metadata.
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(grants)
+}
+
+// principalHasRole reports whether principal currently holds role, per
+// RoleIndex membership (not capability state). Used by roleAssignHandler and
+// roleRevokeHandler to make repeated assign/revoke calls no-ops rather than
+// writing redundant log entries — in particular, this is what makes it safe
+// to drop a principal onto a role they already hold in the Assign tab.
+func principalHasRole(meta *metadata.Store, principal, role string) bool {
+	for _, r := range meta.RolesForPrincipal(principal) {
+		if r == role {
+			return true
+		}
+	}
+	return false
 }
