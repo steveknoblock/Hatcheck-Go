@@ -170,7 +170,32 @@
     .status-pill.expired { border-color: var(--text-muted); color: var(--text-muted); }
     .status-pill.active  { border-color: var(--accent); color: var(--accent); }
 
+    /* Role badge — outlined rather than filled like .perm-badge, so a role
+       tag reads visually distinct from a permission tag at a glance. */
+    .role {
+        display: inline-block; padding: 2px 8px; font-size: 10px; font-weight: 800;
+        letter-spacing: 0.06em; text-transform: uppercase; border-radius: 2px;
+        border: 1px solid var(--accent); color: var(--accent); background: transparent;
+    }
+
     .empty-state { padding: 40px 20px; text-align: center; color: var(--text-muted); font-size: 13px; }
+
+    /* ── Assign tab (drag & drop) ── */
+    .dnd-columns { display: flex; gap: 20px; align-items: flex-start; }
+    .dnd-column { flex: 1; min-width: 0; }
+    .dnd-column-title { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin-bottom: 8px; }
+    .dnd-column .field-input { margin-bottom: 8px; }
+    .dnd-list { border: 1px solid var(--border); background: var(--surface); max-height: 320px; overflow-y: auto; }
+    .dnd-item {
+        padding: 9px 12px; font-size: 13px; border-bottom: 1px solid var(--border);
+        font-family: var(--mono); user-select: none;
+    }
+    .dnd-item:last-child { border-bottom: none; }
+    .dnd-item.principal-item { cursor: grab; }
+    .dnd-item.principal-item:hover { background: var(--surface2); }
+    .dnd-item.principal-item.dragging { opacity: 0.35; }
+    .dnd-item.role-item { font-family: var(--sans); font-weight: 700; cursor: default; transition: background 0.1s, border-color 0.1s; }
+    .dnd-item.role-item.drag-over { background: var(--surface2); border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 
     /* ── Config panel ── */
     .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin-bottom: 24px; }
@@ -259,6 +284,7 @@
         <div class="tab" data-tab="capabilities" onclick="switchTab('capabilities')">Capabilities</div>
         <div class="tab" data-tab="issue" onclick="switchTab('issue')">Issue capability</div>
         <div class="tab" data-tab="roles" onclick="switchTab('roles')">Roles</div>
+        <div class="tab" data-tab="assign" onclick="switchTab('assign')">Assign</div>
         <div class="tab" data-tab="config" onclick="switchTab('config')">Config</div>
     </div>
 
@@ -429,6 +455,33 @@
                 <tr><td colspan="2" class="empty-state">Not loaded yet.</td></tr>
             </tbody>
         </table>
+    </div>
+
+    <!-- ── Assign (drag & drop) ── -->
+    <div class="panel" id="panel-assign">
+        <div class="section-head">
+            <div>
+                <div class="section-title">Assign</div>
+                <div class="section-sub">Find a principal on the left, drag it onto a role on the right to assign — issues one capability per grant currently defined on that role. A role only shows up here once it's been given at least one grant in the Roles tab.</div>
+            </div>
+            <button class="btn" onclick="loadDndAssign()">Refresh</button>
+        </div>
+        <div class="dnd-columns">
+            <div class="dnd-column">
+                <div class="dnd-column-title">Principals</div>
+                <input class="field-input" id="dnd-principal-filter" placeholder="Filter principals…" oninput="renderDndPrincipals()">
+                <div class="dnd-list" id="dnd-principals-list">
+                    <div class="empty-state">Not loaded yet.</div>
+                </div>
+            </div>
+            <div class="dnd-column">
+                <div class="dnd-column-title">Roles — drop a principal here to assign</div>
+                <input class="field-input" id="dnd-role-filter" placeholder="Filter roles…" oninput="renderDndRoles()">
+                <div class="dnd-list" id="dnd-roles-list">
+                    <div class="empty-state">Not loaded yet.</div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- ── Config ── -->
@@ -610,6 +663,7 @@ function switchTab(name) {
     if (name === 'principals' && !principalsLoaded) loadPrincipals();
     if (name === 'capabilities' && !capabilitiesLoaded) loadCapabilities();
     if (name === 'roles' && !rolesLoaded) loadRoles();
+    if (name === 'assign') loadDndAssign();
     if (name === 'config' && !configLoaded) loadConfig();
 }
 
@@ -975,6 +1029,7 @@ async function addRoleGrant() {
         if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
         showToast('Grant added', text.trim());
         loadRoleGrants();
+        loadDndAssign(); // the role may be brand new and need to appear in the Assign list
     } catch (err) {
         showToast('Add grant failed', err.message, true);
     }
@@ -993,8 +1048,107 @@ async function removeRoleGrant(hash, perm) {
         if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
         showToast('Grant removed', text.trim());
         loadRoleGrants();
+        loadDndAssign(); // a role can disappear from the Assign list if that was its last grant
     } catch (err) {
         showToast('Remove grant failed', err.message, true);
+    }
+}
+
+// ── Assign (drag & drop) ──
+// Two independently-filterable lists — principals (from /principals, the
+// same capability-log-derived directory the Principals tab uses) and roles
+// (from /roles, which now includes roles that only have a grant defined and
+// no members yet — see the Roles() fix). Dragging a principal onto a role
+// calls the same /role/assign endpoint the manual form in the Roles tab
+// uses; this is a second front end onto identical backend behavior, not a
+// separate code path.
+let dndPrincipals = [];
+let dndRoles = [];
+
+async function loadDndAssign() {
+    const principalsList = document.getElementById('dnd-principals-list');
+    const rolesList = document.getElementById('dnd-roles-list');
+    principalsList.innerHTML = '<div class="empty-state">Loading…</div>';
+    rolesList.innerHTML = '<div class="empty-state">Loading…</div>';
+    try {
+        const [pRes, rRes] = await Promise.all([
+            adminFetch(`${API}/principals`),
+            adminFetch(`${API}/roles`),
+        ]);
+        if (!pRes.ok) throw new Error(`principals: HTTP ${pRes.status}`);
+        if (!rRes.ok) throw new Error(`roles: HTTP ${rRes.status}`);
+        dndPrincipals = await pRes.json();
+        dndRoles = await rRes.json();
+    } catch (err) {
+        principalsList.innerHTML = `<div class="empty-state">Failed to load: ${escHtml(err.message)}</div>`;
+        rolesList.innerHTML = '<div class="empty-state">—</div>';
+        return;
+    }
+    renderDndPrincipals();
+    renderDndRoles();
+}
+
+function renderDndPrincipals() {
+    const filter = document.getElementById('dnd-principal-filter').value.trim().toLowerCase();
+    const list = document.getElementById('dnd-principals-list');
+    const filtered = filter ? dndPrincipals.filter(p => p.toLowerCase().includes(filter)) : dndPrincipals;
+
+    if (!dndPrincipals.length) {
+        list.innerHTML = '<div class="empty-state">No principals yet — no bound capabilities have been issued.</div>';
+        return;
+    }
+    if (!filtered.length) {
+        list.innerHTML = '<div class="empty-state">No principals match.</div>';
+        return;
+    }
+    list.innerHTML = filtered.map(p => `
+        <div class="dnd-item principal-item" draggable="true"
+             ondragstart="event.dataTransfer.setData('text/plain', '${escAttr(p)}'); this.classList.add('dragging')"
+             ondragend="this.classList.remove('dragging')">
+            ${escHtml(p)}
+        </div>
+    `).join('');
+}
+
+function renderDndRoles() {
+    const filter = document.getElementById('dnd-role-filter').value.trim().toLowerCase();
+    const list = document.getElementById('dnd-roles-list');
+    const filtered = filter ? dndRoles.filter(r => r.toLowerCase().includes(filter)) : dndRoles;
+
+    if (!dndRoles.length) {
+        list.innerHTML = '<div class="empty-state">No roles defined yet — add a grant to a role in the Roles tab first.</div>';
+        return;
+    }
+    if (!filtered.length) {
+        list.innerHTML = '<div class="empty-state">No roles match.</div>';
+        return;
+    }
+    list.innerHTML = filtered.map(r => `
+        <div class="dnd-item role-item"
+             ondragover="event.preventDefault(); this.classList.add('drag-over')"
+             ondragleave="this.classList.remove('drag-over')"
+             ondrop="handleRoleDrop(event, '${escAttr(r)}')">
+            ${escHtml(r)}
+        </div>
+    `).join('');
+}
+
+async function handleRoleDrop(event, role) {
+    event.preventDefault();
+    event.currentTarget.classList.remove('drag-over');
+    const principal = event.dataTransfer.getData('text/plain');
+    if (!principal || !role) return;
+    if (!confirm(`Assign role "${role}" to ${principal}?`)) return;
+
+    const params = new URLSearchParams({ principal, role, reason: 'assigned via drag-and-drop' });
+    try {
+        const res = await adminFetch(`${API}/role/assign?${params.toString()}`, { method: 'POST' });
+        const text = await res.text();
+        if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
+        showToast('Role assigned', text.trim() + ' — click to view in Capabilities', false, () => viewPrincipalCapabilities(principal));
+        rolesLoaded = false; // Roles tab's browse table should reflect this next time it's opened
+    } catch (err) {
+        showToast('Assign failed', err.message, true);
     }
 }
 
