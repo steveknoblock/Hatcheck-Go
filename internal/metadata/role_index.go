@@ -110,14 +110,28 @@ func (r *RoleIndex) PrincipalsForRole(role string) []string {
 	return result
 }
 
-// Roles returns all distinct role names that have ever had at least one
-// active assignment.
+// Roles returns every distinct role name that currently means something —
+// either it has at least one active member, or it has at least one grant
+// defined, or both. Before this included the grants side, a role you'd just
+// defined (added a capability template to, but hadn't assigned to anyone
+// yet) was invisible here — indistinguishable from a role that had never
+// existed. A role is "real" as soon as it has a definition, membership, or
+// both, so this is the union of both projections.
 func (r *RoleIndex) Roles() []string {
-	result := make([]string, 0, len(r.byRole))
-	for role := range r.byRole {
-		if len(r.byRole[role]) > 0 {
-			result = append(result, role)
+	seen := make(map[string]struct{})
+	for role, members := range r.byRole {
+		if len(members) > 0 {
+			seen[role] = struct{}{}
 		}
+	}
+	for role, grants := range r.grants {
+		if len(grants) > 0 {
+			seen[role] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(seen))
+	for role := range seen {
+		result = append(result, role)
 	}
 	return result
 }

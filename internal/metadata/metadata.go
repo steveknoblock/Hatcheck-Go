@@ -524,8 +524,9 @@ func (s *Store) PrincipalsForRole(role string) []string {
 	return []string{}
 }
 
-// Roles returns all distinct role names that currently have at least one
-// active assignment.
+// Roles returns every distinct role name that currently means something —
+// has an active member, has a grant defined, or both. See RoleIndex.Roles
+// for why both sides matter.
 func (s *Store) Roles() []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
