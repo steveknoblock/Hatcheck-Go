@@ -378,7 +378,7 @@
         <div class="section-head">
             <div>
                 <div class="section-title">Roles</div>
-                <div class="section-sub">A role is two things: a <strong>definition</strong> (the set of capability grants it carries) and a <strong>membership</strong> (which principals hold it). Assigning a role mints one capability per grant for the principal; removing it revokes them. Editing a role's grants below retroactively applies to everyone who already holds it.</div>
+                <div class="section-sub">A role is two things: a <strong>definition</strong> (the set of capability grants it carries) and a <strong>membership</strong> (which principals hold it). Define a role's grants below, then use the <strong>Assign</strong> tab to drag a principal onto it — that issues one capability per grant. To remove a role from someone, filter or drill into it in Browse below and use its Remove button.</div>
             </div>
             <button class="btn" onclick="loadRoles()">Refresh</button>
         </div>
@@ -418,24 +418,6 @@
             </tbody>
         </table>
 
-        <!-- Assign / revoke -->
-        <div class="section-title" style="font-size:14px; margin-bottom:4px">Assign / remove role</div>
-        <div class="section-sub" style="margin-bottom:14px">Uses the role name entered above. Assigning issues capabilities for every grant currently on that role; removing revokes every capability that was issued under it.</div>
-        <div class="form-grid" style="margin-bottom:20px">
-            <div class="field">
-                <label>Principal</label>
-                <input class="field-input mono" id="role-principal" placeholder="Stytch user ID">
-            </div>
-            <div class="field">
-                <label>Reason <span class="field-hint">(optional, stored in audit log)</span></label>
-                <input class="field-input" id="role-reason" placeholder="e.g. joined project, initial setup">
-            </div>
-        </div>
-        <div class="form-actions" style="margin-bottom:24px">
-            <button class="btn btn-primary" onclick="assignRole()">Assign role above to principal</button>
-            <button class="btn btn-danger" onclick="revokeRole()">Remove role above from principal</button>
-        </div>
-
         <!-- Filter and table -->
         <div class="section-head" style="margin-top:8px">
             <div class="filter-row">
@@ -449,10 +431,10 @@
         </div>
         <table>
             <thead>
-                <tr><th>Principal / Role</th><th>Members / Roles held</th></tr>
+                <tr><th>Principal / Role</th><th>Members / Roles held</th><th style="width:90px"></th></tr>
             </thead>
             <tbody id="roles-body">
-                <tr><td colspan="2" class="empty-state">Not loaded yet.</td></tr>
+                <tr><td colspan="3" class="empty-state">Not loaded yet.</td></tr>
             </tbody>
         </table>
     </div>
@@ -850,7 +832,7 @@ async function loadRoles() {
     const filterPrincipal = document.getElementById('role-filter-principal').value.trim();
     const filterRole      = document.getElementById('role-filter-role').value.trim();
     const body = document.getElementById('roles-body');
-    body.innerHTML = '<tr><td colspan="2" class="empty-state">Loading…</td></tr>';
+    body.innerHTML = '<tr><td colspan="3" class="empty-state">Loading…</td></tr>';
 
     try {
         let rows = '';
@@ -861,7 +843,7 @@ async function loadRoles() {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const roles = await res.json();
             if (!roles.length) {
-                body.innerHTML = `<tr><td colspan="2" class="empty-state">${escHtml(filterPrincipal)} holds no roles.</td></tr>`;
+                body.innerHTML = `<tr><td colspan="3" class="empty-state">${escHtml(filterPrincipal)} holds no roles.</td></tr>`;
                 rolesLoaded = true;
                 return;
             }
@@ -869,6 +851,7 @@ async function loadRoles() {
                 <tr>
                     <td class="mono">${escHtml(filterPrincipal)}</td>
                     <td><span class="role">${escHtml(role)}</span></td>
+                    <td><button class="btn btn-danger" onclick="removeRoleFromPrincipal('${escAttr(filterPrincipal)}', '${escAttr(role)}')">Remove</button></td>
                 </tr>
             `).join('');
 
@@ -878,7 +861,7 @@ async function loadRoles() {
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const principals = await res.json();
             if (!principals.length) {
-                body.innerHTML = `<tr><td colspan="2" class="empty-state">No principals hold the role "${escHtml(filterRole)}".</td></tr>`;
+                body.innerHTML = `<tr><td colspan="3" class="empty-state">No principals hold the role "${escHtml(filterRole)}".</td></tr>`;
                 rolesLoaded = true;
                 return;
             }
@@ -886,16 +869,19 @@ async function loadRoles() {
                 <tr>
                     <td class="mono clickable" onclick="viewPrincipalRoles('${escAttr(p)}')">${escHtml(p)}</td>
                     <td><span class="role">${escHtml(filterRole)}</span></td>
+                    <td><button class="btn btn-danger" onclick="removeRoleFromPrincipal('${escAttr(p)}', '${escAttr(filterRole)}')">Remove</button></td>
                 </tr>
             `).join('');
 
         } else {
-            // Show all active roles with their member counts.
+            // Show all active roles with their member counts. No single
+            // principal to target here, so the Remove column is blank —
+            // drill into a specific role (or principal) first.
             const res = await adminFetch(`${API}/roles`);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const roles = await res.json();
             if (!roles.length) {
-                body.innerHTML = '<tr><td colspan="2" class="empty-state">No roles have been assigned yet.</td></tr>';
+                body.innerHTML = '<tr><td colspan="3" class="empty-state">No roles have been assigned yet.</td></tr>';
                 rolesLoaded = true;
                 return;
             }
@@ -912,6 +898,7 @@ async function loadRoles() {
                 <tr>
                     <td><span class="role">${escHtml(role)}</span></td>
                     <td class="clickable" onclick="viewRoleMembers('${escAttr(role)}')">${counts[i]} member${counts[i] !== 1 ? 's' : ''} →</td>
+                    <td></td>
                 </tr>
             `).join('');
         }
@@ -919,7 +906,7 @@ async function loadRoles() {
         body.innerHTML = rows;
         rolesLoaded = true;
     } catch (err) {
-        body.innerHTML = `<tr><td colspan="2" class="empty-state">Failed to load: ${escHtml(err.message)}</td></tr>`;
+        body.innerHTML = `<tr><td colspan="3" class="empty-state">Failed to load: ${escHtml(err.message)}</td></tr>`;
     }
 }
 
@@ -937,44 +924,14 @@ function viewRoleMembers(role) {
     loadRoleGrants();
 }
 
-async function assignRole() {
-    const principal = document.getElementById('role-principal').value.trim();
-    const role      = document.getElementById('role-name').value.trim();
-    const reason    = document.getElementById('role-reason').value.trim();
-    if (!principal || !role) {
-        showToast('Missing fields', 'Principal and role are required.', true);
-        return;
-    }
-    const params = new URLSearchParams({ principal, role });
-    if (reason) params.set('reason', reason);
-    try {
-        const res = await adminFetch(`${API}/role/assign?${params.toString()}`, { method: 'POST' });
-        const text = await res.text();
-        if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
-        showToast('Role assigned', text.trim());
-        rolesLoaded = false;
-        loadRoles();
-    } catch (err) {
-        showToast('Assign failed', err.message, true);
-    }
-}
-
-async function revokeRole() {
-    const principal = document.getElementById('role-principal').value.trim();
-    const role      = document.getElementById('role-name').value.trim();
-    const reason    = document.getElementById('role-reason').value.trim();
-    if (!principal || !role) {
-        showToast('Missing fields', 'Principal and role are required.', true);
-        return;
-    }
+async function removeRoleFromPrincipal(principal, role) {
     if (!confirm(`Remove role "${role}" from ${principal}? This revokes every capability issued under it.`)) return;
-    const params = new URLSearchParams({ principal, role });
-    if (reason) params.set('reason', reason);
+    const params = new URLSearchParams({ principal, role, reason: 'removed via Roles browse table' });
     try {
         const res = await adminFetch(`${API}/role/revoke?${params.toString()}`, { method: 'POST' });
         const text = await res.text();
         if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
-        showToast('Role removed', text.trim());
+        showToast('Role removed', text.trim() + ' — click to view in Capabilities', false, () => viewPrincipalCapabilities(principal));
         rolesLoaded = false;
         loadRoles();
     } catch (err) {
