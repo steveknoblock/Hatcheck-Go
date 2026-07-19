@@ -1,0 +1,9 @@
+/* ── Toast ── */
+        .toast {
+            position: fixed; bottom: 24px; right: 24px; background: var(--text); color: var(--bg);
+            padding: 12px 18px; min-width: 220px; max-width: 360px; transform: translateY(20px);
+            opacity: 0; pointer-events: none; transition: all 0.25s; z-index: 2000;
+        }
+        .toast.show { transform: translateY(0); opacity: 1; }
+        .toast-label { font-size: 10px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
+        .toast.error .toast-label { color: #ff8888; }
