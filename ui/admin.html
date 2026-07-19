@@ -180,6 +180,12 @@
 
         .empty-state { padding: 40px 20px; text-align: center; color: var(--text-muted); font-size: 13px; }
 
+    /* Card — visually separates a distinct workflow (e.g. defining a role)
+       from other content in the same tab (e.g. a listing above it). */
+    .card { border: 1px solid var(--border); background: var(--surface); padding: 18px 20px; margin-top: 8px; }
+    .card-title { font-family: var(--serif); font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+    .card-sub { font-size: 12px; color: var(--text-dim); margin-bottom: 14px; line-height: 1.5; }
+
         /* ── Assign tab (drag & drop) ── */
         .dnd-columns { display: flex; gap: 20px; align-items: flex-start; }
         .dnd-column { flex: 1; min-width: 0; }
@@ -371,14 +377,37 @@
         <div class="section-head">
             <div>
                 <div class="section-title">Roles</div>
-                <div class="section-sub">A role is two things: a <strong>definition</strong> (the set of capability grants it carries) and a <strong>membership</strong> (which principals hold it). Define a role's grants below, then use the <strong>Assign</strong> tab to drag a principal onto it — that issues one capability per grant. To remove a role from someone, filter or drill into it in Browse below and use its Remove button.</div>
+                <div class="section-sub">A role is two things: a <strong>definition</strong> (the set of capability grants it carries) and a <strong>membership</strong> (which principals hold it). Browse existing roles and assignments below, or define a new role's grants further down. Use the <strong>Assign</strong> tab to drag a principal onto a role.</div>
             </div>
             <button class="btn" onclick="loadRoles()">Refresh</button>
         </div>
 
-        <!-- Role definition (grants) -->
-        <div class="section-title" style="font-size:14px; margin-bottom:4px">Role definition</div>
-        <div class="section-sub" style="margin-bottom:14px">Grants are the capability templates a role carries. Adding one here immediately issues that capability to every principal currently holding the role below; removing one revokes it from all of them.</div>
+        <!-- Listing -->
+        <div class="section-head" style="margin-top:8px">
+            <div class="filter-row">
+                <input class="field-input" id="role-filter-principal" placeholder="Filter by principal…"
+                       onkeydown="if(event.key==='Enter') loadRoles()">
+                <input class="field-input" id="role-filter-role" placeholder="Filter by role…"
+                       onkeydown="if(event.key==='Enter') loadRoles()">
+                <button class="btn" onclick="loadRoles()">Filter</button>
+                <button class="btn" onclick="clearRoleFilter()">Show all</button>
+            </div>
+        </div>
+        <table style="margin-bottom:28px">
+            <thead>
+                <tr><th>Principal / Role</th><th>Members / Roles held</th><th style="width:90px"></th></tr>
+            </thead>
+            <tbody id="roles-body">
+                <tr><td colspan="3" class="empty-state">Not loaded yet.</td></tr>
+            </tbody>
+        </table>
+
+        <!-- Role definition (grants) — separated in its own card since
+             it's a distinct workflow (defining what a role means) from
+             the listing above (browsing who holds what). -->
+        <div class="card">
+            <div class="card-title">Define a role</div>
+            <div class="card-sub">Grants are the capability templates a role carries. Adding one here immediately issues that capability to every principal currently holding the role below; removing one revokes it from all of them.</div>
         <div class="form-grid" style="margin-bottom:14px">
             <div class="field">
                 <label>Role</label>
@@ -404,7 +433,7 @@
             <button class="btn" onclick="loadRoleGrants()">View grants</button>
             <button class="btn btn-primary" onclick="addRoleGrant()">Add grant</button>
         </div>
-        <table style="margin-bottom:28px">
+            <table>
             <thead><tr><th>Hash</th><th>Perm</th><th style="width:90px"></th></tr></thead>
             <tbody id="role-grants-body">
                 <tr><td colspan="3" class="empty-state">Type a role above and click "View grants".</td></tr>
