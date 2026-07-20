@@ -434,31 +434,12 @@
             <button class="btn btn-primary" onclick="addRoleGrant()">Add grant</button>
         </div>
             <table>
-            <thead><tr><th>Hash</th><th>Perm</th><th style="width:90px"></th></tr></thead>
-            <tbody id="role-grants-body">
-                <tr><td colspan="3" class="empty-state">Type a role above and click "View grants".</td></tr>
-            </tbody>
-        </table>
-
-        <!-- Filter and table -->
-        <div class="section-head" style="margin-top:8px">
-            <div class="filter-row">
-                <input class="field-input" id="role-filter-principal" placeholder="Filter by principal…"
-                       onkeydown="if(event.key==='Enter') loadRoles()">
-                <input class="field-input" id="role-filter-role" placeholder="Filter by role…"
-                       onkeydown="if(event.key==='Enter') loadRoles()">
-                <button class="btn" onclick="loadRoles()">Filter</button>
-                <button class="btn" onclick="clearRoleFilter()">Show all</button>
-            </div>
+                <thead><tr><th>Hash</th><th>Perm</th><th style="width:90px"></th></tr></thead>
+                <tbody id="role-grants-body">
+                    <tr><td colspan="3" class="empty-state">Type a role above and click "View grants".</td></tr>
+                </tbody>
+            </table>
         </div>
-        <table>
-            <thead>
-                <tr><th>Principal / Role</th><th>Members / Roles held</th><th style="width:90px"></th></tr>
-            </thead>
-            <tbody id="roles-body">
-                <tr><td colspan="3" class="empty-state">Not loaded yet.</td></tr>
-            </tbody>
-        </table>
     </div>
 
     <!-- ── Assign (drag & drop) ── -->
@@ -1197,16 +1178,6 @@ function renderConfig(cfg) {
             ${rateRow('Admin', rates.admin)}
         </table>
     `;
-}
-
-// ── Helpers ──
-function showToast(label, msg, isError = false) {
-    const toast = document.getElementById('toast');
-    document.getElementById('toast-label').textContent = label;
-    document.getElementById('toast-msg').textContent = msg;
-    toast.classList.toggle('error', isError);
-    toast.classList.add('show');
-    setTimeout(() => toast.classList.remove('show'), 3000);
 }
 
 function escHtml(str) {

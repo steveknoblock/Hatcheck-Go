@@ -686,32 +686,6 @@
             text-align: center;
         }
 
-        /* ── Toast ── */
-        .toast {
-            position: fixed;
-            bottom: 20px; right: 20px;
-            padding: 10px 14px;
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-left: 3px solid var(--accent);
-            font-size: 11px;
-            color: var(--text);
-            opacity: 0;
-            transform: translateY(6px);
-            transition: all 0.2s ease;
-            pointer-events: none;
-            z-index: 100;
-            max-width: 320px;
-            word-break: break-all;
-        }
-        .toast.show {
-            opacity: 1;
-            transform: translateY(0);
-        }
-        .toast.error {
-            border-left-color: var(--danger);
-        }
-
         /* ── Login overlay ── */
         .login-overlay {
             position: fixed;
@@ -1971,16 +1945,6 @@ async function handleImportFile(input) {
     } catch (err) {
         showToast('Import failed', err.message, true);
     }
-}
-
-// ── Toast ──
-function showToast(label, msg, isError = false) {
-    const toast = document.getElementById('toast');
-    document.getElementById('toast-label').textContent = label;
-    document.getElementById('toast-msg').textContent   = msg;
-    toast.classList.toggle('error', isError);
-    toast.classList.add('show');
-    setTimeout(() => toast.classList.remove('show'), 3000);
 }
 
 // ── Helpers ──

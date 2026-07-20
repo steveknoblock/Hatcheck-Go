@@ -7,3 +7,5 @@
         .toast.show { transform: translateY(0); opacity: 1; }
         .toast-label { font-size: 10px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
         .toast.error .toast-label { color: #ff8888; }
+        .toast.clickable { cursor: pointer; }
+        .toast.clickable:hover { opacity: 0.9; }
