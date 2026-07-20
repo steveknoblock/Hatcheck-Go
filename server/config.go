@@ -30,8 +30,8 @@ type Config struct {
 	RateReadBurst   int        // HATCHECK_RATE_READ_BURST    (default: 10)
 	RateWriteTokens rate.Limit // HATCHECK_RATE_WRITE_INTERVAL (default: 5s)
 	RateWriteBurst  int        // HATCHECK_RATE_WRITE_BURST   (default: 4)
-	RateAdminTokens rate.Limit // HATCHECK_RATE_ADMIN_INTERVAL (default: 30s)
-	RateAdminBurst  int        // HATCHECK_RATE_ADMIN_BURST   (default: 2)
+	RateAdminTokens rate.Limit // HATCHECK_RATE_ADMIN_INTERVAL (default: 1s)
+	RateAdminBurst  int        // HATCHECK_RATE_ADMIN_BURST   (default: 20)
 }
 
 // LoadConfig reads configuration from environment variables and returns a
@@ -54,8 +54,8 @@ func LoadConfig() Config {
 		RateReadBurst:   envInt("HATCHECK_RATE_READ_BURST", 10),
 		RateWriteTokens: rate.Every(envDuration("HATCHECK_RATE_WRITE_INTERVAL", 5*time.Second)),
 		RateWriteBurst:  envInt("HATCHECK_RATE_WRITE_BURST", 4),
-		RateAdminTokens: rate.Every(envDuration("HATCHECK_RATE_ADMIN_INTERVAL", 30*time.Second)),
-		RateAdminBurst:  envInt("HATCHECK_RATE_ADMIN_BURST", 2),
+		RateAdminTokens: rate.Every(envDuration("HATCHECK_RATE_ADMIN_INTERVAL", time.Second)),
+		RateAdminBurst:  envInt("HATCHECK_RATE_ADMIN_BURST", 20),
 	}
 
 	// Required — signing key must be set.
