@@ -33,11 +33,14 @@ services:
       # the same as "unset". IMPORTANT: earlier versions of this file did
       # NOT forward these — anything set in .env was silently ignored
       # because Compose only passes through vars actually listed here.
-      # If the admin UI trips 429s during normal browsing, raise
+      # If the admin UI still trips 429s during normal browsing, raise
       # HATCHECK_RATE_ADMIN_INTERVAL/BURST in .env — the built-in defaults
-      # (30s interval, burst of 2) are tuned for infrequent admin actions
-      # like /export or /capability, not a UI polling several endpoints
-      # per page load.
+      # (1s interval, burst of 20) are sized for interactive UI browsing
+      # (many endpoints — /capabilities, /principals, /config, /roles,
+      # /role/grants — get polled per tab switch), not just infrequent
+      # one-off actions like /export or /capability. Admin's real
+      # protection is PermAdmin possession, not this limit; this is a
+      # backstop against a runaway client, not the primary defense.
       HATCHECK_CAPABILITY_EXPIRY: ${HATCHECK_CAPABILITY_EXPIRY:-}
       HATCHECK_RATE_READ_INTERVAL: ${HATCHECK_RATE_READ_INTERVAL:-}
       HATCHECK_RATE_READ_BURST: ${HATCHECK_RATE_READ_BURST:-}
