@@ -93,6 +93,9 @@ func makeArchive(t *testing.T, source string) []byte {
 }
 
 // stashOne is a test helper that stashes content and returns the hash.
+// stashHandler's response body is JSON ({"hash":..., "capability":...}) —
+// this must unmarshal it rather than return the raw body, or every caller
+// downstream ends up treating the whole JSON blob as "the hash".
 func stashOne(t *testing.T, store *cas.Store, meta *metadata.Store, content string) string {
 	t.Helper()
 
@@ -110,7 +113,12 @@ func stashOne(t *testing.T, store *cas.Store, meta *metadata.Store, content stri
 	if w.Code != http.StatusCreated {
 		t.Fatalf("stashOne failed: %d %s", w.Code, w.Body.String())
 	}
-	return strings.TrimSpace(w.Body.String())
+
+	var result stashResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("stashOne: failed to unmarshal response %q: %v", w.Body.String(), err)
+	}
+	return result.Hash
 }
 
 // vrForHash returns a VerifiedRequest with the given hash and a test principal.
@@ -133,18 +141,28 @@ func TestStashHandler_Success(t *testing.T) {
 
 	content := "hello #world"
 	sum := md5.Sum([]byte(content))
-	hash := hex.EncodeToString(sum[:])
+	wantHash := hex.EncodeToString(sum[:])
 
 	req := httptest.NewRequest(http.MethodPost, "/stash", strings.NewReader(content))
 	w := httptest.NewRecorder()
-	stashHandler(w, req, store, meta, serverTestKey, testConfig(), vrForHash(hash))
+	stashHandler(w, req, store, meta, serverTestKey, testConfig(), vrForHash(wantHash))
 
 	if w.Code != http.StatusCreated {
 		t.Errorf("expected 201, got %d", w.Code)
 	}
-	got := strings.TrimSpace(w.Body.String())
-	if len(got) != 32 {
-		t.Errorf("expected 32-char hash, got %q", got)
+
+	var result stashResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to unmarshal response %q: %v", w.Body.String(), err)
+	}
+	if result.Hash != wantHash {
+		t.Errorf("expected hash %q, got %q", wantHash, result.Hash)
+	}
+	if result.Capability.Hash != wantHash {
+		t.Errorf("expected capability to cover %q, got %q", wantHash, result.Capability.Hash)
+	}
+	if result.Capability.Perm != PermWrite {
+		t.Errorf("expected write capability, got perm %q", result.Capability.Perm)
 	}
 }
 
@@ -160,16 +178,41 @@ func TestStashHandler_WrongMethod(t *testing.T) {
 	}
 }
 
-func TestStashHandler_WrongHash(t *testing.T) {
+// TestStashHandler_CapabilityIrrelevant documents a real design point, not
+// an oversight: stash is auth-only (see routes.go — no cm.Protect wrapper).
+// There's no pre-existing capability to check the content's hash against,
+// because stash is the ownership-creation event itself — the server always
+// issues a fresh write capability for whatever hash the content produces,
+// regardless of what (if anything) is in vr.Capability. An older version of
+// this test asserted stash should 403 on a capability/content hash mismatch;
+// that behavior was intentionally removed, not broken.
+func TestStashHandler_CapabilityIrrelevant(t *testing.T) {
 	store, _, _, meta := newTestEnv(t)
 
-	// Capability covers a different hash than the content produces.
-	req := httptest.NewRequest(http.MethodPost, "/stash", strings.NewReader("hello #world"))
-	w := httptest.NewRecorder()
-	stashHandler(w, req, store, meta, serverTestKey, testConfig(), vrForHash("wrong-hash"))
+	content := "hello #world"
+	sum := md5.Sum([]byte(content))
+	wantHash := hex.EncodeToString(sum[:])
 
-	if w.Code != http.StatusForbidden {
-		t.Errorf("expected 403, got %d", w.Code)
+	// vr carries a capability for an unrelated hash — stash must still succeed.
+	req := httptest.NewRequest(http.MethodPost, "/stash", strings.NewReader(content))
+	w := httptest.NewRecorder()
+	stashHandler(w, req, store, meta, serverTestKey, testConfig(), vrForHash("completely-unrelated-hash"))
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var result stashResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to unmarshal response %q: %v", w.Body.String(), err)
+	}
+	if result.Hash != wantHash {
+		t.Errorf("expected hash %q, got %q", wantHash, result.Hash)
+	}
+	// The issued capability must cover the real content hash, not the
+	// unrelated one that happened to be sitting in vr.Capability.
+	if result.Capability.Hash != wantHash {
+		t.Errorf("expected issued capability to cover %q, got %q", wantHash, result.Capability.Hash)
 	}
 }
 
@@ -458,9 +501,16 @@ func TestCollectionHandler_Success(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Errorf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	hash := strings.TrimSpace(w.Body.String())
-	if len(hash) != 32 {
-		t.Errorf("expected 32-char hash, got %q", hash)
+
+	var result stashResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to unmarshal response %q: %v", w.Body.String(), err)
+	}
+	if len(result.Hash) != 32 {
+		t.Errorf("expected 32-char hash, got %q", result.Hash)
+	}
+	if result.Capability.Hash != result.Hash {
+		t.Errorf("expected capability to cover %q, got %q", result.Hash, result.Capability.Hash)
 	}
 }
 
@@ -483,24 +533,41 @@ func TestRelationHandler_Success(t *testing.T) {
 	from := stashOne(t, store, meta, "from object #source")
 	to := stashOne(t, store, meta, "to object #target")
 
-	req := httptest.NewRequest(http.MethodPost,
-		"/relation?from="+from+"&rel=contextualizes&to="+to, nil)
+	body := `{"from":"` + from + `","rel":"contextualizes","to":"` + to + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/relation", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	relationHandler(w, req, store, meta, serverTestKey, testConfig(), vrEmpty())
 
 	if w.Code != http.StatusCreated {
-		t.Errorf("expected 201, got %d: %s", w.Code, w.Body.String())
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	hash := strings.TrimSpace(w.Body.String())
-	if len(hash) != 32 {
-		t.Errorf("expected 32-char hash, got %q", hash)
+
+	var result stashResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("failed to unmarshal response %q: %v", w.Body.String(), err)
+	}
+	if len(result.Hash) != 32 {
+		t.Errorf("expected 32-char hash, got %q", result.Hash)
 	}
 }
 
 func TestRelationHandler_MissingParams(t *testing.T) {
 	store, _, _, meta := newTestEnv(t)
 
-	req := httptest.NewRequest(http.MethodPost, "/relation?from=abc&rel=contextualizes", nil)
+	body := `{"from":"abc","rel":"contextualizes"}` // "to" missing
+	req := httptest.NewRequest(http.MethodPost, "/relation", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	relationHandler(w, req, store, meta, serverTestKey, testConfig(), vrEmpty())
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestRelationHandler_MalformedBody(t *testing.T) {
+	store, _, _, meta := newTestEnv(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/relation", strings.NewReader("not json"))
 	w := httptest.NewRecorder()
 	relationHandler(w, req, store, meta, serverTestKey, testConfig(), vrEmpty())
 
@@ -546,10 +613,13 @@ func TestRelationsHandler_WithRelations(t *testing.T) {
 	from := stashOne(t, store, meta, "from object")
 	to := stashOne(t, store, meta, "to object")
 
-	relReq := httptest.NewRequest(http.MethodPost,
-		"/relation?from="+from+"&rel=contextualizes&to="+to, nil)
+	relBody := `{"from":"` + from + `","rel":"contextualizes","to":"` + to + `"}`
+	relReq := httptest.NewRequest(http.MethodPost, "/relation", strings.NewReader(relBody))
 	relW := httptest.NewRecorder()
 	relationHandler(relW, relReq, store, meta, serverTestKey, testConfig(), vrEmpty())
+	if relW.Code != http.StatusCreated {
+		t.Fatalf("setup: failed to create relation: %d %s", relW.Code, relW.Body.String())
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/relations?hash="+from, nil)
 	w := httptest.NewRecorder()
