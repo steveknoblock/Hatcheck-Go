@@ -7,7 +7,6 @@ import (
 )
 
 const shardLen = 2
-const directorySeparator = "/"
 
 type HashFunc func(content string) string
 
@@ -26,69 +25,52 @@ func New(objPath string, hashFunc HashFunc) (*Store, error) {
 	return &Store{objPath: objPath, hashFunc: hashFunc}, nil
 }
 
-// Stashes a value in the store.
+// Stash stores content in the CAS and returns its hash. Stashing the same
+// content twice is a no-op the second time (the file already exists) and
+// returns the same hash, since the hash is derived purely from content.
 func (store *Store) Stash(content string) (string, error) {
-
-	// Create hash of content.
-
-	// Hash content using hash function passed to store.
-	// The hash function is defined by the caller and can be any function
-	// that takes a string and returns a string.
 	hash := store.hashFunc(content)
-
-	// Create shard and file name from hash.
-
-	// Check hash is long enough to create shard and file name.
 	if len(hash) < 3 {
 		return "", fmt.Errorf("hash too short: %q", hash)
 	}
-	// Shard name is first 2 hex chars (1 byte).
-	shardName := hash[0:shardLen]
-	// File name is remaining hex chars.
-	fileName := hash[shardLen:]
 
-	// Create shard directory if it doesn't exist.
-	shardPath := store.objPath + directorySeparator + shardName
+	// Shard name is the first 2 hex chars, file name is the rest — keeps
+	// any single directory from accumulating too many entries as the
+	// store grows.
+	shardName := hash[0:shardLen]
+	fileName := hash[shardLen:]
+	shardPath := filepath.Join(store.objPath, shardName)
+
 	if err := os.MkdirAll(shardPath, 0755); err != nil {
 		return "", err
 	}
 
-	// Create file.
-	filePath := shardPath + directorySeparator + fileName
-	f, e := os.Create(filePath)
-	if e != nil {
-		return "", e
+	f, err := os.Create(filepath.Join(shardPath, fileName))
+	if err != nil {
+		return "", err
 	}
 	defer f.Close()
 
-	_, e = f.WriteString(content)
-	if e != nil {
-		return "", e
+	if _, err := f.WriteString(content); err != nil {
+		return "", err
 	}
 
 	return hash, nil
-
 }
 
-// Fetches a value from the store.
+// Fetch retrieves content by hash.
 func (store *Store) Fetch(hash string) (string, error) {
-
-	// Check hash is long enough to create shard and file name.
 	if len(hash) < 3 {
 		return "", fmt.Errorf("hash too short: %q", hash)
 	}
 
-	// Shard name is first 2 hex chars (1 byte).
 	shardName := hash[0:shardLen]
-	// File name is remaining hex chars.
 	fileName := hash[shardLen:]
+	filePath := filepath.Join(store.objPath, shardName, fileName)
 
-	filePath := store.objPath + directorySeparator + shardName + directorySeparator + fileName
-
-	// Read file.
-	data, e := os.ReadFile(filePath)
-	if e != nil {
-		return "", e
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", err
 	}
 
 	return string(data), nil
