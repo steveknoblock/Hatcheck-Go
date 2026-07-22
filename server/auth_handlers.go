@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/steveknoblock/hatcheck-go/internal/auth"
@@ -45,6 +46,61 @@ func loginHandler(w http.ResponseWriter, req *http.Request, authClient *auth.Cli
 	fmt.Fprintln(w, "magic link sent")
 }
 
+// defaultNamespace derives a starting namespace for a newly-authenticated
+// user, analogous to a Unix home directory: somewhere sensible to land by
+// default, not a constraint on where they're allowed to work. Nothing on
+// the server enforces this — namespace is purely a prefix convention on
+// Name labels (see internal/metadata), so a user remains free to create or
+// switch to any other namespace at any time. This only affects what the
+// client pre-selects right after login.
+//
+// Prefers the local part of the email (before '@'), since that's usually
+// the most recognizable to the user themselves; falls back to the Stytch
+// user ID if no email is available. Both are slugified since namespace
+// becomes a literal path segment in Name labels ("namespace/label") — it
+// needs to be predictable and free of characters that would be awkward in
+// a label or a URL query parameter.
+func defaultNamespace(identity auth.Identity) string {
+	if identity.Email != "" {
+		if local, _, ok := strings.Cut(identity.Email, "@"); ok {
+			if slug := slugify(local); slug != "" {
+				return slug
+			}
+		}
+	}
+	if slug := slugify(identity.UserID); slug != "" {
+		return slug
+	}
+	// Should be unreachable in practice — Stytch always provides a UserID —
+	// but avoid ever handing back an empty namespace, which would just
+	// look like "no default" on the client rather than "no identity".
+	return "user"
+}
+
+// slugify lowercases s and replaces every run of characters other than
+// a-z, 0-9, '-', and '_' with a single '-', then trims leading/trailing
+// '-'. Used to turn free-form identity fields (email, user ID) into
+// something safe to embed as a namespace prefix in a Name label and as a
+// URL query parameter value.
+func slugify(s string) string {
+	s = strings.ToLower(s)
+	var b strings.Builder
+	prevDash := false
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+			prevDash = false
+		default:
+			if !prevDash && b.Len() > 0 {
+				b.WriteRune('-')
+				prevDash = true
+			}
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
 // authenticateHandler handles the magic link callback from Stytch.
 // It exchanges the Stytch token for a session JWT, issues a wildcard read
 // capability for the authenticated user, and redirects to the UI with both.
@@ -82,12 +138,16 @@ func authenticateHandler(w http.ResponseWriter, req *http.Request, authClient *a
 		log.Printf("warning: failed to marshal read capability for %s: %v", identity.UserID, err)
 	}
 
-	// Redirect to the UI with the session JWT, user identity, and read
-	// capability as query parameters. handleMagicLinkCallback reads these,
-	// stores them in sessionStorage, and cleans the URL.
-	redirectURL := fmt.Sprintf("/ui/?session_jwt=%s&user_id=%s",
+	// Redirect to the UI with the session JWT, user identity, read
+	// capability, and a default namespace as query parameters.
+	// handleMagicLinkCallback reads these, stores them in sessionStorage,
+	// and cleans the URL. default_ns is only ever a starting suggestion —
+	// see defaultNamespace's doc comment — the client is free to ignore or
+	// override it, and nothing server-side enforces it.
+	redirectURL := fmt.Sprintf("/ui/?session_jwt=%s&user_id=%s&default_ns=%s",
 		url.QueryEscape(sessionJWT),
 		url.QueryEscape(identity.UserID),
+		url.QueryEscape(defaultNamespace(identity)),
 	)
 	if identity.Email != "" {
 		redirectURL += "&email=" + url.QueryEscape(identity.Email)

@@ -1031,12 +1031,12 @@ async function sendMagicLink() {
 // Handle magic link callback — server redirects here with session_jwt and user_id
 // as query parameters after authenticating the Stytch token.
 async function handleMagicLinkCallback() {
-    const params = new URLSearchParams(window.location.search);
-    console.log('callback params:', window.location.search);  // add this
-    const jwt     = params.get('session_jwt');
-    const uid     = params.get('user_id');
-    const email   = params.get('email');
-    const readCap = params.get('read_cap');
+    const params    = new URLSearchParams(window.location.search);
+    const jwt       = params.get('session_jwt');
+    const uid       = params.get('user_id');
+    const email     = params.get('email');
+    const readCap   = params.get('read_cap');
+    const defaultNs = params.get('default_ns');
     if (!jwt) return;
 
     // Clean the parameters from the URL without a page reload.
@@ -1054,15 +1054,35 @@ async function handleMagicLinkCallback() {
         sessionStorage.setItem('browse_cap_token', browseCapToken);
     }
 
+    // default_ns is a starting suggestion, not a constraint (see the
+    // server-side defaultNamespace doc comment) — only apply it if the
+    // user doesn't already have a namespace from a previous session in
+    // this browser. A returning user's own choice always wins.
+    if (!namespace && defaultNs) {
+        namespace = defaultNs;
+        sessionStorage.setItem('namespace', namespace);
+    }
+
     updateAuthUI();
     showToast('Signed in', email || uid);
 }
-// On load: check for magic link callback params, then update auth UI.
-// Must be inside DOMContentLoaded — updateAuthUI touches the DOM and the
-// elements it references don't exist yet when the script first executes.
+// On load: check for magic link callback params, then update auth UI, then
+// (if a namespace is set — either from a previous session or a fresh
+// default_ns from this login) pre-fill the namespace field and actually
+// load it, the same way a Unix shell starts you in $HOME rather than just
+// showing it to you. Must be inside DOMContentLoaded — updateAuthUI touches
+// the DOM and the elements it references don't exist yet when the script
+// first executes. The namespace pre-fill/load must wait for the callback
+// promise to resolve too, since for a brand-new login, namespace is only
+// set asynchronously inside handleMagicLinkCallback above.
 document.addEventListener('DOMContentLoaded', () => {
-    handleMagicLinkCallback().then(updateAuthUI);
-    if (namespace) document.getElementById('ns-input').value = namespace;
+    handleMagicLinkCallback().then(() => {
+        updateAuthUI();
+        if (sessionJWT && namespace) {
+            document.getElementById('ns-input').value = namespace;
+            loadNamespace();
+        }
+    });
 });
 
 // Load capability for a specific hash from sessionStorage.
