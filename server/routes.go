@@ -66,12 +66,34 @@ func registerRoutes(
 	http.HandleFunc("/tags", Adapt(am.RequireAuth(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		tagsHandler(w, req, meta, vr)
 	})))))
-	http.HandleFunc("/export", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	http.HandleFunc("/dates", Adapt(am.RequireAuth(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+		datesHandler(w, req, meta, vr)
+	})))))
+	// /export requires only PermRead, not PermAdmin — every logged-in user
+	// already holds a wildcard read capability from login (see
+	// authenticateHandler), and reading is intentionally universal in this
+	// capability model, so exporting what you can already read follows the
+	// same rule rather than needing a separate admin grant. Rate-limited
+	// under Read to match, not Admin.
+	http.HandleFunc("/export", Adapt(am.RequireAuth(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		exportHandler(w, req, cfg.ObjPath, cfg.MetaPath, vr)
 	})))))
-	http.HandleFunc("/import", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+	// /import requires only PermWrite, not PermAdmin — importing is
+	// fundamentally a write operation (it creates new objects and Names
+	// from an uploaded archive), so anyone who can write can import,
+	// mirroring /export's "read implies export" rule one level up.
+	// Rate-limited under Write to match, not Admin.
+	// /import is auth-only, no capability required — same as /stash. Both
+	// are creation operations: import establishes ownership for whatever
+	// it creates (share.Import prefixes names with the source identifier),
+	// rather than requiring one first. Requiring PermWrite here would mean
+	// a brand-new user who hasn't stashed anything yet — and so holds no
+	// write capability at all — couldn't import until after they'd
+	// already written something, which doesn't match how /stash works for
+	// exactly the same kind of user.
+	http.HandleFunc("/import", Adapt(am.RequireAuth(rl.Write.Limit(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		importHandler(w, req, cfg.ObjPath, cfg.MetaPath, vr)
-	})))))
+	}))))
 	// POST /capability issues a new capability. Other methods return 405.
 	http.HandleFunc("/capability", Adapt(am.RequireAuth(rl.Admin.Limit(cm.Protect(PermAdmin, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		issueHandler(w, req, cm.Key, meta, vr)
