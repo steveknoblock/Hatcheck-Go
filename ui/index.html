@@ -128,6 +128,36 @@
 
         .ns-go:hover { background: var(--accent-dim); }
 
+        /* ── Browse mode toggle (namespace vs. date) ── */
+        .browse-toggle {
+            display: flex;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+
+        .browse-toggle-btn {
+            flex: 1;
+            padding: 7px 0;
+            background: none;
+            border: none;
+            font-family: var(--sans);
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.12s ease;
+        }
+
+        .browse-toggle-btn:hover { color: var(--text); }
+
+        .browse-toggle-btn.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+        }
+
         .header-right {
             margin-left: auto;
             display: flex;
@@ -798,7 +828,7 @@
 
 <div class="workspace">
     <div class="panel-left" id="panel-left">
-        <div class="ns-input-wrap">
+        <div class="ns-input-wrap" id="ns-input-wrap">
             <span class="ns-label">ns</span>
             <input class="ns-input" id="ns-input" type="text" placeholder="namespace"
                    autocomplete="off"
@@ -807,6 +837,10 @@
                    onblur="onNsBlur()">
             <div class="ns-dropdown" id="ns-dropdown"></div>
             <button class="ns-go" onclick="loadNamespace()">Go</button>
+        </div>
+        <div class="browse-toggle">
+            <button class="browse-toggle-btn active" id="browse-toggle-namespace" onclick="setBrowseMode('namespace')">By namespace</button>
+            <button class="browse-toggle-btn" id="browse-toggle-date" onclick="setBrowseMode('date')">By date</button>
         </div>
         <div class="panel-header">
             <span class="panel-label" id="panel-title">Names</span>
@@ -1031,12 +1065,12 @@ async function sendMagicLink() {
 // Handle magic link callback — server redirects here with session_jwt and user_id
 // as query parameters after authenticating the Stytch token.
 async function handleMagicLinkCallback() {
-    const params    = new URLSearchParams(window.location.search);
-    const jwt       = params.get('session_jwt');
-    const uid       = params.get('user_id');
-    const email     = params.get('email');
-    const readCap   = params.get('read_cap');
-    const defaultNs = params.get('default_ns');
+    const params = new URLSearchParams(window.location.search);
+    console.log('callback params:', window.location.search);  // add this
+    const jwt     = params.get('session_jwt');
+    const uid     = params.get('user_id');
+    const email   = params.get('email');
+    const readCap = params.get('read_cap');
     if (!jwt) return;
 
     // Clean the parameters from the URL without a page reload.
@@ -1054,35 +1088,15 @@ async function handleMagicLinkCallback() {
         sessionStorage.setItem('browse_cap_token', browseCapToken);
     }
 
-    // default_ns is a starting suggestion, not a constraint (see the
-    // server-side defaultNamespace doc comment) — only apply it if the
-    // user doesn't already have a namespace from a previous session in
-    // this browser. A returning user's own choice always wins.
-    if (!namespace && defaultNs) {
-        namespace = defaultNs;
-        sessionStorage.setItem('namespace', namespace);
-    }
-
     updateAuthUI();
     showToast('Signed in', email || uid);
 }
-// On load: check for magic link callback params, then update auth UI, then
-// (if a namespace is set — either from a previous session or a fresh
-// default_ns from this login) pre-fill the namespace field and actually
-// load it, the same way a Unix shell starts you in $HOME rather than just
-// showing it to you. Must be inside DOMContentLoaded — updateAuthUI touches
-// the DOM and the elements it references don't exist yet when the script
-// first executes. The namespace pre-fill/load must wait for the callback
-// promise to resolve too, since for a brand-new login, namespace is only
-// set asynchronously inside handleMagicLinkCallback above.
+// On load: check for magic link callback params, then update auth UI.
+// Must be inside DOMContentLoaded — updateAuthUI touches the DOM and the
+// elements it references don't exist yet when the script first executes.
 document.addEventListener('DOMContentLoaded', () => {
-    handleMagicLinkCallback().then(() => {
-        updateAuthUI();
-        if (sessionJWT && namespace) {
-            document.getElementById('ns-input').value = namespace;
-            loadNamespace();
-        }
-    });
+    handleMagicLinkCallback().then(updateAuthUI);
+    if (namespace) document.getElementById('ns-input').value = namespace;
 });
 
 // Load capability for a specific hash from sessionStorage.
@@ -1242,6 +1256,118 @@ function renderNameList() {
             <span class="tree-label">${n.label}</span>
         </div>
     `).join('');
+}
+
+// ── Browse by date ──
+// A second way into content, alongside namespace/name browsing. Content is
+// otherwise only reachable via a Name or by already knowing its hash — this
+// surfaces everything ever stashed, grouped by the day it was stashed,
+// which also catches content that was never given a Name at all.
+let browseMode   = 'namespace'; // 'namespace' | 'date'
+let allDates     = [];
+let datesLoaded  = false;       // cached like allTags — dates only change on new stashes
+let selectedDate = null;
+let dateHashes   = [];
+
+function setBrowseMode(mode) {
+    // No early return on mode === browseMode: clicking the already-active
+    // tab is the reset affordance back to that mode's top-level view after
+    // descending into a collection overwrote #tree (the same thing already
+    // happens in namespace mode — this mirrors it for date mode).
+    browseMode = mode;
+    document.getElementById('browse-toggle-namespace').classList.toggle('active', mode === 'namespace');
+    document.getElementById('browse-toggle-date').classList.toggle('active', mode === 'date');
+    document.getElementById('ns-input-wrap').style.display = mode === 'namespace' ? '' : 'none';
+
+    if (mode === 'namespace') {
+        document.getElementById('panel-title').textContent = 'Names';
+        if (namespace) {
+            renderNameList();
+        } else {
+            document.getElementById('panel-count').textContent = '—';
+            document.getElementById('tree').innerHTML = '<div class="empty-state">Enter a namespace<br>and click Go.</div>';
+        }
+    } else {
+        selectedDate = null;
+        loadDatesList();
+    }
+}
+
+async function loadDatesList() {
+    if (!datesLoaded) {
+        try {
+            const res = await apiFetch(`${API}/dates`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            allDates = await res.json();
+            datesLoaded = true;
+        } catch (err) {
+            showToast('Error', 'Failed to load dates', true);
+            return;
+        }
+    }
+    renderDatesList();
+}
+
+function renderDatesList() {
+    selectedDate = null;
+    const tree = document.getElementById('tree');
+    document.getElementById('panel-title').textContent = 'Dates';
+    document.getElementById('panel-count').textContent = allDates.length;
+
+    if (!allDates.length) {
+        tree.innerHTML = '<div class="empty-state">Nothing stashed yet.</div>';
+        return;
+    }
+
+    // allDates is already sorted most-recent-first by the server.
+    tree.innerHTML = allDates.map(date => `
+        <div class="tree-item" onclick="selectDate('${escAttr(date)}')">
+            <span class="tree-icon icon-name">▸</span>
+            <span class="tree-label">${escHtml(date)}</span>
+        </div>
+    `).join('');
+}
+
+async function selectDate(date) {
+    selectedDate = date;
+    document.getElementById('panel-title').textContent = date;
+
+    try {
+        const res = await apiFetch(`${API}/query?index=date&key=${encodeURIComponent(date)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        dateHashes = await res.json();
+        renderDateHashList();
+    } catch (err) {
+        showToast('Error', 'Failed to load that date', true);
+    }
+}
+
+function renderDateHashList() {
+    const tree = document.getElementById('tree');
+    document.getElementById('panel-count').textContent = dateHashes.length;
+
+    let html = `
+        <div class="tree-item" onclick="renderDatesList()">
+            <span class="tree-icon icon-name">‹</span>
+            <span class="tree-label">All dates</span>
+        </div>
+    `;
+
+    if (!dateHashes.length) {
+        html += '<div class="empty-state">Nothing stashed on this date.</div>';
+    } else {
+        // These hashes may or may not have a Name anywhere — navigateToHash
+        // already handles both cases (looks up a Name if one exists in the
+        // current namespace, otherwise descends directly by hash).
+        html += dateHashes.map(hash => `
+            <div class="tree-item ${hash === currentHash ? 'active' : ''}" onclick="navigateToHash('${escAttr(hash)}')">
+                <span class="tree-icon icon-object">·</span>
+                <span class="tree-label">${escHtml(hash.slice(0, 12))}…</span>
+            </div>
+        `).join('');
+    }
+
+    tree.innerHTML = html;
 }
 
 // ── Navigation ──
@@ -1909,20 +2035,38 @@ function renderBreadcrumb() {
 }
 
 // ── Share ──
-function shareDocument() {
+async function shareDocument() {
     if (!namespace || !currentLabel) return;
 
     const fullName = namespace + '/' + currentLabel;
     const url = `${API}/export?source=${encodeURIComponent(namespace)}&name=${encodeURIComponent(fullName)}`;
 
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = namespace + '.tar.gz';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    // A plain <a href="..."> navigation sends no custom headers at all —
+    // not Authorization, not X-User-ID, not X-Capability-Token — so it
+    // always 401s against an auth-gated endpoint regardless of who's
+    // asking. Fetch it through apiFetch (which attaches those headers)
+    // and download the resulting blob instead.
+    try {
+        const res = await apiFetch(url);
+        if (!res.ok) {
+            const msg = await res.text();
+            throw new Error(msg || `HTTP ${res.status}`);
+        }
+        const blob = await res.blob();
+        const blobUrl = URL.createObjectURL(blob);
 
-    showToast('Sharing', `${fullName} → ${namespace}.tar.gz`);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = namespace + '.tar.gz';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(blobUrl);
+
+        showToast('Sharing', `${fullName} → ${namespace}.tar.gz`);
+    } catch (err) {
+        showToast('Export failed', err.message, true);
+    }
 }
 
 // ── Import ──
