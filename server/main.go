@@ -417,6 +417,26 @@ func tagsHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store,
 	json.NewEncoder(w).Encode(tags)
 }
 
+// datesHandler returns all dates that have at least one stash entry,
+// most-recent-first. Used to populate the date-browsing view in the UI —
+// selecting one of these dates and querying /query?index=date&key=<date>
+// is how content gets found by when it was stashed rather than by name.
+// GET /dates
+func datesHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, vr VerifiedRequest) {
+	if req.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	dates := meta.AllDates()
+	if dates == nil {
+		dates = []string{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(dates)
+}
+
 // exportHandler streams a tar.gz archive to the client.
 // GET /export?source=bob
 // GET /export?source=bob&name=my-document

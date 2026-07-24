@@ -399,6 +399,23 @@ func (s *Store) AllTags() []string {
 	return []string{}
 }
 
+// AllDates returns every date (YYYY-MM-DD) that has at least one stash
+// entry, most-recent-first. Used to populate a date-based browsing view —
+// content is otherwise only reachable via a Name or by already knowing its
+// hash, so this is what makes "what did I stash on a given day" possible
+// even for content that was never given a Name.
+func (s *Store) AllDates() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if idx, ok := s.indexMap["date"]; ok {
+		if dl, ok := idx.(DateLister); ok {
+			return dl.Dates()
+		}
+	}
+	return []string{}
+}
+
 // RelationsForHash returns all outgoing and incoming relations for a given hash.
 // Outgoing: relations where hash is the From end.
 // Incoming: relations where hash is the To end.

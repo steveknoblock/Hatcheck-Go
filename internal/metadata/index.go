@@ -27,6 +27,13 @@ type TagLister interface {
 	Tags() []string
 }
 
+// DateLister is implemented by indexes that support listing all known
+// stash dates, for browsing content chronologically rather than by name
+// or tag.
+type DateLister interface {
+	Dates() []string
+}
+
 // CapabilityQuerier is implemented by indexes that support rich capability
 // queries: lookup by principal, full enumeration, lookup by ID, and listing
 // distinct principals. Bundled into one interface because Store's

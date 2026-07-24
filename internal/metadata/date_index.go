@@ -1,6 +1,9 @@
 package metadata
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"sort"
+)
 
 // DateIndex maps dates (YYYY-MM-DD) to hashes from stash entries.
 type DateIndex struct {
@@ -32,4 +35,17 @@ func (d *DateIndex) Add(entry Entry) {
 
 func (d *DateIndex) Query(key string) []string {
 	return d.data[key]
+}
+
+// Dates returns every date that has at least one stash entry, sorted
+// most-recent-first — unlike TagIndex.Tags (unordered), chronological
+// order is the whole point of browsing by date, so this sorts rather than
+// just ranging over the map.
+func (d *DateIndex) Dates() []string {
+	result := make([]string, 0, len(d.data))
+	for date := range d.data {
+		result = append(result, date)
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(result)))
+	return result
 }

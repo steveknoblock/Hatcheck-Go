@@ -703,6 +703,84 @@ func TestTagsHandler_WrongMethod(t *testing.T) {
 	}
 }
 
+// --- datesHandler ---
+
+func TestDatesHandler_Empty(t *testing.T) {
+	_, _, _, meta := newTestEnv(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/dates", nil)
+	w := httptest.NewRecorder()
+	datesHandler(w, req, meta, vrEmpty())
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+	var result []string
+	json.Unmarshal(w.Body.Bytes(), &result)
+	if len(result) != 0 {
+		t.Errorf("expected empty dates, got %v", result)
+	}
+}
+
+func TestDatesHandler_WithDates(t *testing.T) {
+	store, _, _, meta := newTestEnv(t)
+	stashOne(t, store, meta, "content stashed today")
+
+	req := httptest.NewRequest(http.MethodGet, "/dates", nil)
+	w := httptest.NewRecorder()
+	datesHandler(w, req, meta, vrEmpty())
+
+	var result []string
+	json.Unmarshal(w.Body.Bytes(), &result)
+	if len(result) != 1 {
+		t.Fatalf("expected 1 date, got %v", result)
+	}
+	// Format sanity check: YYYY-MM-DD, 10 characters.
+	if len(result[0]) != 10 {
+		t.Errorf("expected YYYY-MM-DD formatted date, got %q", result[0])
+	}
+}
+
+func TestDatesHandler_WrongMethod(t *testing.T) {
+	_, _, _, meta := newTestEnv(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/dates", nil)
+	w := httptest.NewRecorder()
+	datesHandler(w, req, meta, vrEmpty())
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+// TestDatesAndQueryHandler_RoundTrip confirms /dates and
+// /query?index=date&key=<date> work together — /dates tells the client
+// which dates have content, /query fetches what was stashed on one.
+func TestDatesAndQueryHandler_RoundTrip(t *testing.T) {
+	store, _, _, meta := newTestEnv(t)
+	hash := stashOne(t, store, meta, "content stashed today")
+
+	datesReq := httptest.NewRequest(http.MethodGet, "/dates", nil)
+	datesW := httptest.NewRecorder()
+	datesHandler(datesW, datesReq, meta, vrEmpty())
+
+	var dates []string
+	json.Unmarshal(datesW.Body.Bytes(), &dates)
+	if len(dates) != 1 {
+		t.Fatalf("expected 1 date, got %v", dates)
+	}
+
+	queryReq := httptest.NewRequest(http.MethodGet, "/query?index=date&key="+dates[0], nil)
+	queryW := httptest.NewRecorder()
+	queryHandler(queryW, queryReq, meta, vrEmpty())
+
+	var hashes []string
+	json.Unmarshal(queryW.Body.Bytes(), &hashes)
+	if len(hashes) != 1 || hashes[0] != hash {
+		t.Errorf("expected [%s], got %v", hash, hashes)
+	}
+}
+
 // --- exportHandler ---
 
 func TestExportHandler_MissingSource(t *testing.T) {
