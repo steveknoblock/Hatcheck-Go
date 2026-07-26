@@ -716,6 +716,117 @@
             text-align: center;
         }
 
+        /* ── Collection builder ──
+           A mode, not a per-object tab: building a Collection means
+           composing several existing objects into a new one, so it
+           replaces the whole tab-strip/editor/relations area rather than
+           sitting alongside them as a property of whatever's currently
+           open (which is what the Editor/Relations tabs both are). */
+        .collection-builder {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            background: var(--bg);
+        }
+
+        .cb-header {
+            padding: 8px 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: var(--surface);
+            flex-shrink: 0;
+        }
+
+        .cb-title {
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: var(--collection);
+        }
+
+        .cb-add-row {
+            padding: 16px;
+            border-bottom: 1px solid var(--border);
+            background: var(--surface);
+            flex-shrink: 0;
+        }
+
+        .cb-add-row .rel-ac-input:focus { border-color: var(--collection); }
+
+        .cb-members {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px 0;
+        }
+
+        .cb-member-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 16px;
+            font-size: 11px;
+            border-left: 2px solid transparent;
+        }
+
+        .cb-member-row:hover {
+            background: rgba(34,119,187,0.05);
+            border-left-color: var(--collection);
+        }
+
+        .cb-member-index {
+            color: var(--text-muted);
+            font-size: 10px;
+            width: 18px;
+            flex-shrink: 0;
+            text-align: right;
+        }
+
+        .cb-member-label {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: var(--text);
+        }
+
+        .cb-member-btns {
+            display: flex;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+
+        .cb-member-btn {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-dim);
+            font-size: 10px;
+            padding: 2px 6px;
+            cursor: pointer;
+        }
+
+        .cb-member-btn:hover:not(:disabled) { border-color: var(--collection); color: var(--collection); }
+        .cb-member-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+        .cb-actions {
+            padding: 12px 16px;
+            border-top: 1px solid var(--border);
+            background: var(--surface);
+            flex-shrink: 0;
+        }
+
+        .btn-collection {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-dim);
+        }
+
+        .btn-collection:hover:not(:disabled) { border-color: var(--collection); color: var(--collection); }
+        .btn-collection:disabled { opacity: 0.4; cursor: not-allowed; }
+
         /* ── Login overlay ── */
         .login-overlay {
             position: fixed;
@@ -816,6 +927,7 @@
     <h1>Hatcheck</h1>
     <div class="header-right">
         <button class="btn btn-ghost" onclick="newObject()" title="New object in current namespace">+ New</button>
+        <button class="btn btn-ghost" onclick="newCollection()" title="Build a new collection from existing objects">+ New Collection</button>
         <button class="btn btn-ghost" onclick="triggerImport()" title="Import a shared archive">↓ Import</button>
         <input type="file" id="import-file-input" accept=".tar.gz,.gz" style="display:none" onchange="handleImportFile(this)">
         <div class="status">
@@ -949,6 +1061,32 @@
                 </div>
             </div>
 
+        </div>
+
+        <!-- Collection builder — a mode entered via the "+ New Collection"
+             header button, not a tab; replaces tab-strip/editor/relations
+             entirely while active. See newCollection()/cancelCollectionBuilder(). -->
+        <div class="collection-builder" id="collection-builder-view" style="display:none">
+            <div class="cb-header">
+                <div class="cb-title">New collection</div>
+                <button class="btn btn-ghost" onclick="cancelCollectionBuilder()">Cancel</button>
+            </div>
+            <div class="cb-add-row">
+                <div class="rel-ac-wrap">
+                    <input class="rel-ac-input" id="cb-add-input" type="text" placeholder="search objects to add…"
+                           autocomplete="off"
+                           oninput="onCbAddInput(this.value)"
+                           onfocus="onCbAddFocus()"
+                           onblur="onCbAddBlur()">
+                    <div class="rel-ac-dropdown" id="cb-add-dropdown"></div>
+                </div>
+            </div>
+            <div class="cb-members" id="cb-members">
+                <div class="empty-state">No members yet — search above to add objects.</div>
+            </div>
+            <div class="cb-actions">
+                <button class="btn btn-collection" id="cb-create-btn" onclick="createCollection()" disabled>Create collection</button>
+            </div>
         </div>
     </div>
 </div>
@@ -1844,10 +1982,15 @@ async function createRelation() {
     btn.textContent = 'Creating…';
 
     try {
-        const res = await apiFetch(
-            `${API}/relation?from=${encodeURIComponent(currentHash)}&rel=${encodeURIComponent(rel)}&to=${encodeURIComponent(relToHash)}`,
-            { method: 'POST' }
-        );
+        // relationHandler expects a JSON body — {"from":..., "rel":...,
+        // "to":...} — not query params. This previously sent from/rel/to
+        // as query params with an empty body, which always 400'd against
+        // the current server-side handler.
+        const res = await apiFetch(`${API}/relation`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ from: currentHash, rel, to: relToHash }),
+        });
         if (!res.ok) throw new Error(await res.text());
         const relData = await res.json();
         const hash = relData.hash;
@@ -1886,6 +2029,193 @@ function resetRelForm() {
     relToSelected   = -1;
     hideRelPreview();
     updateCreateBtn();
+}
+
+// ── Collection builder ──
+// Unlike Relations (a property of whatever object is currently open),
+// building a Collection means composing several existing objects into a
+// new one — there's no single "current object" it's a property of. So
+// this is a mode entered via the header button, replacing the whole
+// tab-strip/editor/relations area rather than living alongside it as a
+// third tab. Reuses the same allNamesFlat + .rel-ac-* search/dropdown
+// pattern Relations' "to" picker already established, just for adding
+// members instead of picking a relation target.
+let cbMembers = []; // ordered [{label, hash}, ...]
+
+function newCollection() {
+    if (editorDirty && !confirm('You have unsaved changes. Continue?')) return;
+
+    cbMembers = [];
+    document.getElementById('cb-add-input').value = '';
+    renderCbMembers();
+
+    document.getElementById('tab-strip').style.display = 'none';
+    document.getElementById('editor-header').style.display = 'none';
+    document.querySelector('.tab-panels').style.display = 'none';
+    document.getElementById('collection-builder-view').style.display = 'flex';
+
+    pathStack    = [];
+    currentHash  = null;
+    currentLabel = null;
+    editorDirty  = false;
+    renderBreadcrumb();
+
+    showToast('New collection', 'Search for objects above to add them, in order.');
+}
+
+function cancelCollectionBuilder() {
+    document.getElementById('collection-builder-view').style.display = 'none';
+    document.getElementById('tab-strip').style.display = '';
+    document.querySelector('.tab-panels').style.display = '';
+    switchTab('editor'); // also restores editor-header's visibility correctly
+}
+
+function onCbAddFocus() {
+    fetchAllNames().then(() => renderCbAddDropdown(document.getElementById('cb-add-input').value));
+}
+
+function onCbAddInput(val) {
+    renderCbAddDropdown(val);
+}
+
+function onCbAddBlur() {
+    setTimeout(() => {
+        document.getElementById('cb-add-dropdown').classList.remove('visible');
+    }, 150);
+}
+
+function renderCbAddDropdown(val) {
+    const dropdown = document.getElementById('cb-add-dropdown');
+    const filtered = val
+        ? allNamesFlat.filter(n => n.label.toLowerCase().includes(val.toLowerCase()))
+        : allNamesFlat;
+
+    if (filtered.length === 0) {
+        dropdown.classList.remove('visible');
+        return;
+    }
+
+    dropdown.innerHTML = filtered.map(n => `
+        <div class="rel-ac-option" onmousedown="addCbMember('${escAttr(n.label)}', '${escAttr(n.hash)}')">
+            ${escHtml(n.label)}
+        </div>
+    `).join('');
+    dropdown.classList.add('visible');
+}
+
+// Duplicates are allowed on purpose — a Collection is just a JSON array
+// of hashes, and there's no reason the same object couldn't legitimately
+// appear more than once (e.g. repeating an image).
+function addCbMember(label, hash) {
+    cbMembers.push({ label, hash });
+    document.getElementById('cb-add-input').value = '';
+    document.getElementById('cb-add-dropdown').classList.remove('visible');
+    renderCbMembers();
+}
+
+function renderCbMembers() {
+    const container = document.getElementById('cb-members');
+    const createBtn = document.getElementById('cb-create-btn');
+    createBtn.disabled = cbMembers.length === 0;
+    createBtn.textContent = cbMembers.length
+        ? `Create collection (${cbMembers.length} member${cbMembers.length !== 1 ? 's' : ''})`
+        : 'Create collection';
+
+    if (!cbMembers.length) {
+        container.innerHTML = '<div class="empty-state">No members yet — search above to add objects.</div>';
+        return;
+    }
+
+    container.innerHTML = cbMembers.map((m, i) => `
+        <div class="cb-member-row">
+            <span class="cb-member-index">${i + 1}</span>
+            <span class="cb-member-label" title="${escAttr(m.hash)}">${escHtml(m.label)}</span>
+            <div class="cb-member-btns">
+                <button class="cb-member-btn" onclick="moveCbMember(${i}, -1)" ${i === 0 ? 'disabled' : ''} title="Move up">↑</button>
+                <button class="cb-member-btn" onclick="moveCbMember(${i}, 1)" ${i === cbMembers.length - 1 ? 'disabled' : ''} title="Move down">↓</button>
+                <button class="cb-member-btn" onclick="removeCbMember(${i})" title="Remove">✕</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function moveCbMember(index, direction) {
+    const newIndex = index + direction;
+    if (newIndex < 0 || newIndex >= cbMembers.length) return;
+    [cbMembers[index], cbMembers[newIndex]] = [cbMembers[newIndex], cbMembers[index]];
+    renderCbMembers();
+}
+
+function removeCbMember(index) {
+    cbMembers.splice(index, 1);
+    renderCbMembers();
+}
+
+async function createCollection() {
+    if (!namespace) {
+        showToast('Error', 'Enter a namespace first', true);
+        return;
+    }
+    if (!cbMembers.length) return;
+
+    const btn = document.getElementById('cb-create-btn');
+    btn.disabled = true;
+    btn.textContent = 'Creating…';
+
+    try {
+        const hashes = cbMembers.map(m => m.hash);
+        const res = await apiFetch(`${API}/collection`, {
+            method: 'POST',
+            body: JSON.stringify(hashes),
+            headers: { 'Content-Type': 'application/json' }
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        const hash = data.hash;
+
+        // Store the capability issued for this collection object — same
+        // pattern saveContent() and createRelation() already use.
+        if (data.capability) {
+            const caps = JSON.parse(sessionStorage.getItem('capabilities') || '{}');
+            caps[hash] = data.capability;
+            sessionStorage.setItem('capabilities', JSON.stringify(caps));
+            capabilityToken = JSON.stringify(data.capability);
+            sessionStorage.setItem('capability_token', capabilityToken);
+            if (!browseCapToken) {
+                browseCapToken = capabilityToken;
+                sessionStorage.setItem('browse_cap_token', browseCapToken);
+            }
+        }
+
+        const label = prompt('Enter a name for this collection:');
+        if (!label) {
+            // Same choice saveContent() makes for an unnamed save: the
+            // object exists in the CAS either way, naming it is optional.
+            showToast('Collection created', `Hash: ${hash} (not named yet)`);
+            cancelCollectionBuilder();
+            return;
+        }
+
+        const nameRes = await apiFetch(
+            `${API}/name?namespace=${encodeURIComponent(namespace)}&label=${encodeURIComponent(label)}&hash=${hash}`,
+            { method: 'POST' }
+        );
+        if (!nameRes.ok) throw new Error('Name creation failed');
+
+        const listRes = await apiFetch(`${API}/names?namespace=${encodeURIComponent(namespace)}`);
+        nameList = await listRes.json();
+
+        showToast('Collection created', `${label} (${cbMembers.length} member${cbMembers.length !== 1 ? 's' : ''})`);
+
+        cancelCollectionBuilder();
+        renderNameList();
+        await navigateToHash(hash); // land on the new collection so it's visibly confirmed, not just a toast
+
+    } catch (err) {
+        showToast('Error', err.message, true);
+        btn.disabled = false;
+        btn.textContent = `Create collection (${cbMembers.length} member${cbMembers.length !== 1 ? 's' : ''})`;
+    }
 }
 
 // ── New object ──
