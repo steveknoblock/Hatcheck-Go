@@ -416,6 +416,23 @@ func (s *Store) AllDates() []string {
 	return []string{}
 }
 
+// KindOf returns the kind of object hash is — "stash", "collection", or
+// "relation" — or "" if it's never appeared in a creation log entry. Used
+// to label entries in a listing (e.g. distinguishing a Collection from a
+// plain document in the namespace browser) without fetching and parsing
+// every hash's content just to find out.
+func (s *Store) KindOf(hash string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if idx, ok := s.indexMap["kind"]; ok {
+		if kq, ok := idx.(KindQuerier); ok {
+			return kq.Kind(hash)
+		}
+	}
+	return ""
+}
+
 // RelationsForHash returns all outgoing and incoming relations for a given hash.
 // Outgoing: relations where hash is the From end.
 // Incoming: relations where hash is the To end.

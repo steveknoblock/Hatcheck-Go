@@ -34,6 +34,12 @@ type DateLister interface {
 	Dates() []string
 }
 
+// KindQuerier is implemented by indexes that support looking up what kind
+// of object a given hash is, without fetching and parsing its content.
+type KindQuerier interface {
+	Kind(hash string) string
+}
+
 // CapabilityQuerier is implemented by indexes that support rich capability
 // queries: lookup by principal, full enumeration, lookup by ID, and listing
 // distinct principals. Bundled into one interface because Store's

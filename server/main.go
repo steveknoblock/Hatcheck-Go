@@ -232,12 +232,27 @@ func namesHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store
 	}
 
 	names := meta.NamesInNamespace(namespace)
-	if names == nil {
-		names = []metadata.NameEntry{}
+
+	// Enrich each entry with its target's kind (stash/collection/relation)
+	// so the client can tell what a name points to — e.g. show a
+	// Collection with a different icon than a plain document — without
+	// fetching and parsing every single one's content just to find out.
+	type nameWithKind struct {
+		Label string `json:"label"`
+		Hash  string `json:"hash"`
+		Kind  string `json:"kind,omitempty"`
+	}
+	result := make([]nameWithKind, len(names))
+	for i, n := range names {
+		result[i] = nameWithKind{
+			Label: n.Label,
+			Hash:  n.Hash,
+			Kind:  meta.KindOf(n.Hash),
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(names)
+	json.NewEncoder(w).Encode(result)
 }
 
 // nameHandler creates or updates a Name in the metadata store.
@@ -606,6 +621,7 @@ func main() {
 		metadata.NewRelationIndex(),
 		metadata.NewCapabilityIndex(),
 		metadata.NewRoleIndex(),
+		metadata.NewKindIndex(),
 	)
 	if err != nil {
 		log.Fatalf("failed to load metadata store: %v", err)

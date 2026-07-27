@@ -1377,6 +1377,17 @@ async function loadNamespace() {
     }
 }
 
+// Icon shown per name-list entry, based on the kind field /names now
+// returns (see server's KindIndex — determined from the log entry that
+// created the hash, not by fetching and parsing content). Falls back to
+// the plain document icon for 'stash' and for anything unrecognized
+// (older data written before this existed won't have a kind yet).
+function iconForKind(kind) {
+    if (kind === 'collection') return { cls: 'icon-collection', glyph: '▤' };
+    if (kind === 'relation')   return { cls: 'icon-relation',   glyph: '→' };
+    return { cls: 'icon-name', glyph: '▸' };
+}
+
 function renderNameList() {
     const tree = document.getElementById('tree');
     document.getElementById('panel-count').textContent = nameList.length;
@@ -1387,13 +1398,16 @@ function renderNameList() {
         return;
     }
 
-    tree.innerHTML = nameList.map(n => `
+    tree.innerHTML = nameList.map(n => {
+        const icon = iconForKind(n.kind);
+        return `
         <div class="tree-item ${n.hash === currentHash ? 'active' : ''}"
              onclick="selectName('${n.label}', '${n.hash}')">
-            <span class="tree-icon icon-name">▸</span>
+            <span class="tree-icon ${icon.cls}">${icon.glyph}</span>
             <span class="tree-label">${n.label}</span>
         </div>
-    `).join('');
+    `;
+    }).join('');
 }
 
 // ── Browse by date ──

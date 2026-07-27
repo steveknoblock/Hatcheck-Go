@@ -68,6 +68,7 @@ func newTestEnv(t *testing.T) (store *cas.Store, objPath, metaPath string, meta 
 		metadata.NewNameIndex(),
 		metadata.NewRelationIndex(),
 		metadata.NewCapabilityIndex(),
+		metadata.NewKindIndex(),
 	)
 	if err != nil {
 		t.Fatalf("failed to create metadata store: %v", err)
@@ -420,6 +421,66 @@ func TestNamesHandler_PrefixStripped(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &result)
 	if len(result) != 1 || result[0].Label != "my-doc" {
 		t.Errorf("expected label 'my-doc' without prefix, got %v", result)
+	}
+}
+
+// TestNamesHandler_IncludesKind exercises the actual creation endpoints
+// (not AppendNameCreate directly) so KindIndex sees real stash/collection
+// entries, confirming /names correctly labels which of a namespace's
+// entries are plain documents versus Collections.
+func TestNamesHandler_IncludesKind(t *testing.T) {
+	store, _, _, meta := newTestEnv(t)
+
+	leafHash := stashOne(t, store, meta, "a plain document")
+	nameReq := httptest.NewRequest(http.MethodPost,
+		"/name?namespace=bob&label=doc&hash="+leafHash, nil)
+	nameW := httptest.NewRecorder()
+	nameHandler(nameW, nameReq, meta, vrForHash(leafHash))
+	if nameW.Code != http.StatusOK {
+		t.Fatalf("setup: failed to name leaf: %d %s", nameW.Code, nameW.Body.String())
+	}
+
+	colBody := `["` + leafHash + `"]`
+	colReq := httptest.NewRequest(http.MethodPost, "/collection", strings.NewReader(colBody))
+	colW := httptest.NewRecorder()
+	collectionHandler(colW, colReq, store, meta, serverTestKey, testConfig(), vrEmpty())
+	if colW.Code != http.StatusCreated {
+		t.Fatalf("setup: failed to create collection: %d %s", colW.Code, colW.Body.String())
+	}
+	var colResult stashResponse
+	json.Unmarshal(colW.Body.Bytes(), &colResult)
+
+	colNameReq := httptest.NewRequest(http.MethodPost,
+		"/name?namespace=bob&label=col&hash="+colResult.Hash, nil)
+	colNameW := httptest.NewRecorder()
+	nameHandler(colNameW, colNameReq, meta, vrForHash(colResult.Hash))
+	if colNameW.Code != http.StatusOK {
+		t.Fatalf("setup: failed to name collection: %d %s", colNameW.Code, colNameW.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/names?namespace=bob", nil)
+	w := httptest.NewRecorder()
+	namesHandler(w, req, meta, vrEmpty())
+
+	var result []struct {
+		Label string `json:"label"`
+		Hash  string `json:"hash"`
+		Kind  string `json:"kind"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &result)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 names, got %d: %v", len(result), result)
+	}
+
+	kinds := make(map[string]string, 2)
+	for _, r := range result {
+		kinds[r.Label] = r.Kind
+	}
+	if kinds["doc"] != "stash" {
+		t.Errorf("expected doc to have kind 'stash', got %q", kinds["doc"])
+	}
+	if kinds["col"] != "collection" {
+		t.Errorf("expected col to have kind 'collection', got %q", kinds["col"])
 	}
 }
 
