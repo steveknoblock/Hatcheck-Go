@@ -425,6 +425,22 @@
             border-bottom-color: var(--relation);
         }
 
+        /* Relations count badge — visible without clicking the tab, so a
+           post's relations show up ambiently while browsing, matching how
+           the namespace tree itself already surfaces things at a glance. */
+        .tab-badge {
+            display: inline-block;
+            margin-left: 5px;
+            padding: 1px 5px;
+            font-size: 9px;
+            font-weight: 700;
+            border-radius: 8px;
+            background: var(--relation);
+            color: var(--bg);
+            letter-spacing: 0;
+            vertical-align: 1px;
+        }
+
         /* hash display sits in the tab strip on the right */
         .tab-strip-hash {
             margin-left: auto;
@@ -973,7 +989,7 @@
         <!-- Tab strip replaces the old editor-header hash display -->
         <div class="tab-strip" id="tab-strip">
             <button class="tab-btn active" id="tab-editor-btn" onclick="switchTab('editor')">Editor</button>
-            <button class="tab-btn tab-relation" id="tab-relation-btn" onclick="switchTab('relations')" disabled>Relations</button>
+            <button class="tab-btn tab-relation" id="tab-relation-btn" onclick="switchTab('relations')" disabled>Relations<span class="tab-badge" id="rel-tab-badge" style="display:none"></span></button>
             <div class="tab-strip-hash">
                 <span id="current-hash">—</span>
             </div>
@@ -1657,9 +1673,14 @@ function renderEditor(hash, content, readOnly = false) {
     // Enable Relations tab only when a hash is loaded.
     relTab.disabled = !hash;
 
-    // If relations tab is currently active and we navigated to a new hash, refresh.
-    if (currentTab === 'relations' && hash) {
+    // Always fetch relations when a document opens, regardless of which
+    // tab is active — this is what makes the count badge on the tab
+    // itself show up ambiently while browsing, instead of only appearing
+    // after clicking into the Relations tab for that specific post.
+    if (hash) {
         loadRelationsPanel(hash);
+    } else {
+        document.getElementById('rel-tab-badge').style.display = 'none';
     }
 
     // Update rel-from display.
@@ -1689,8 +1710,19 @@ async function loadRelationsPanel(hash) {
         const res = await apiFetch(`${API}/relations?hash=${hash}`);
         if (!res.ok) throw new Error('Failed to load relations');
         const data = await res.json();
-        renderRelList(data.outgoing || [], data.incoming || []);
-        renderTreeRelations(hash, data.outgoing || [], data.incoming || []);
+        const outgoing = data.outgoing || [];
+        const incoming = data.incoming || [];
+        renderRelList(outgoing, incoming);
+        renderTreeRelations(hash, outgoing, incoming);
+
+        const badge = document.getElementById('rel-tab-badge');
+        const total = outgoing.length + incoming.length;
+        if (total > 0) {
+            badge.textContent = total;
+            badge.style.display = '';
+        } else {
+            badge.style.display = 'none';
+        }
     } catch(err) {
         showToast('Error', err.message, true);
     }
