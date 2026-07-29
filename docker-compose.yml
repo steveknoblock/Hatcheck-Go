@@ -4,10 +4,9 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        # Keep in sync with the `go` directive in go.mod. See the note in
-        # the Dockerfile — go.mod currently says 1.25.0 as an unintended
-        # side effect of an unrelated commit; drop this if/when it's
-        # pinned back down.
+        # Keep in sync with the `go` directive in go.mod (currently 1.25.0).
+        # See the note in the Dockerfile for the history of how the project
+        # landed on this floor.
         GO_VERSION: "1.25.0"
     image: hatcheck-go:local
     restart: unless-stopped

@@ -2,10 +2,11 @@
 
 # --- Build stage ---
 #
-# GO_VERSION currently matches go.mod as it stands on GitHub (1.25.0), which
-# was an unintentional side effect of commit 048ab8b (adding
-# golang.org/x/time/rate) rather than a deliberate floor. If go.mod gets
-# pinned back down to something like 1.21/1.22, lower this ARG to match —
+# GO_VERSION must match (or exceed) the `go` directive in go.mod (1.25.0).
+# go.mod originally landed on 1.25.0 as a side effect of commit 048ab8b
+# (adding golang.org/x/time/rate via `go mod tidy`); that version has since
+# been adopted as the project's floor rather than pinned back down. Bump
+# this ARG in lockstep if go.mod's `go` directive is ever raised again —
 # using a builder image older than go.mod's declared version will fail the
 # build with "go.mod requires go >= X".
 ARG GO_VERSION=1.25.0

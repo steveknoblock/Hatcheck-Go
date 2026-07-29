@@ -15,7 +15,7 @@ Verify the installation:
 go version
 ```
 
-Go 1.21 or later is required.
+Go 1.25.0 or later is required.
 
 ---
 

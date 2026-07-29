@@ -8,7 +8,7 @@ Hatcheck is a minimal content addressable object store for documents with a meta
 
 See SETUP.md
 
-Hatcheck is programmed in Go. The minimum version required to run Hatcheck is Go 1.21.6
+Hatcheck is programmed in Go. The minimum version required to run Hatcheck is Go 1.25.0
 
 ## User Interface
 
