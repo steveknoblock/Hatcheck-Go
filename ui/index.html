@@ -1289,6 +1289,11 @@ let relToSelected   = -1;   // keyboard selection index in to-object dropdown
 let relToHash       = null; // hash of chosen "to" object
 let relToLabel      = null; // label of chosen "to" object
 let allNamesFlat    = [];   // [{label, hash}] across all namespaces for object search
+let namespaceCache  = {};   // namespace -> nameList, for every namespace loaded this session
+                             // ("workspace" of namespaces visited so far, not the whole server)
+let namesByHash      = {};  // hash -> {label, kind, namespace}, merged from namespaceCache in
+                             // renderNameList() — lets collection members resolve to a name
+                             // even when it lives in a namespace other than the current one.
 
 // ── Draggable divider ──
 const divider   = document.getElementById('divider');
@@ -1408,6 +1413,23 @@ function renderNameList() {
     const tree = document.getElementById('tree');
     document.getElementById('panel-count').textContent = nameList.length;
     document.getElementById('panel-title').textContent = 'Names';
+
+    // Cache this namespace's names, then rebuild the merged hash -> name
+    // lookup across every namespace visited this session (the "workspace"),
+    // used by renderCollectionPanel. Current namespace is merged in last so
+    // it wins on hash collisions — if the same hash happens to be named in
+    // both the current and another namespace, prefer the local one.
+    namespaceCache[namespace] = nameList;
+    namesByHash = {};
+    for (const ns of Object.keys(namespaceCache)) {
+        if (ns === namespace) continue;
+        for (const n of namespaceCache[ns]) {
+            namesByHash[n.hash] = { label: n.label, kind: n.kind, namespace: ns };
+        }
+    }
+    for (const n of nameList) {
+        namesByHash[n.hash] = { label: n.label, kind: n.kind, namespace: namespace };
+    }
 
     if (!nameList || nameList.length === 0) {
         tree.innerHTML = '<div class="empty-state">No names in this namespace.</div>';
@@ -1595,13 +1617,28 @@ function renderCollectionPanel(members, collectionHash) {
 
     pathStack[pathStack.length - 1].members = members;
 
-    tree.innerHTML = members.map((hash, i) => `
+    // Members are anonymous CAS objects, identified only by hash — but many
+    // will also have a Name pointing at them somewhere in the workspace of
+    // namespaces visited this session (loaded into namesByHash). Show that
+    // name when we have it, tagging it with its source namespace if that
+    // differs from the one currently being browsed, so "named elsewhere" is
+    // visually distinct from "named locally". Falls back to a shortened
+    // hash when no name is known at all. The full hash is always available
+    // via the title attribute.
+    tree.innerHTML = members.map((hash, i) => {
+        const known = namesByHash[hash];
+        const icon = known ? iconForKind(known.kind) : { cls: 'icon-object', glyph: '·' };
+        const display = known
+            ? (known.namespace === namespace ? known.label : `${known.label} (${known.namespace})`)
+            : hash.slice(0, 8) + '…';
+        return `
         <div class="tree-item ${hash === currentHash ? 'active' : ''}"
-             onclick="selectMember(${i}, '${hash}')">
-            <span class="tree-icon icon-object">·</span>
-            <span class="tree-label">${hash}</span>
+             onclick="selectMember(${i}, '${hash}')" title="${hash}">
+            <span class="tree-icon ${icon.cls}">${icon.glyph}</span>
+            <span class="tree-label">${display}</span>
         </div>
-    `).join('');
+    `;
+    }).join('');
 }
 
 async function selectMember(index, hash) {
