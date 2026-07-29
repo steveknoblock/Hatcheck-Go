@@ -2432,8 +2432,18 @@ function renderBreadcrumb() {
         return;
     }
 
-    const parts = pathStack.map((frame, i) => {
-        const isLast = i === pathStack.length - 1;
+    // Intermediate frames are almost always anonymous path-copy wrapper
+    // collections (see the Path Copying architecture note) with no name of
+    // their own, so a deep drill-down used to render as a wall of hash
+    // segments. Show only the root (named) frame and the current position;
+    // clicking the root still jumps straight back to it via navigateTo(0).
+    const rootIdx = 0;
+    const lastIdx = pathStack.length - 1;
+    const indices = lastIdx === rootIdx ? [rootIdx] : [rootIdx, lastIdx];
+
+    const parts = indices.map((i) => {
+        const frame = pathStack[i];
+        const isLast = i === lastIdx;
         if (isLast) {
             return `<span class="crumb-current">${escHtml(frame.label)}</span>`;
         }
