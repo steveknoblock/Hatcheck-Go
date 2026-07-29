@@ -134,6 +134,47 @@ func readManifestFromArchive(t *testing.T, archivePath string) Manifest {
 	return Manifest{}
 }
 
+// readLogFromArchive reads the raw metadata/log.json contents from a tar.gz
+// archive as a string, for substring assertions against name labels.
+func readLogFromArchive(t *testing.T, archivePath string) string {
+	t.Helper()
+	f, err := os.Open(archivePath)
+	if err != nil {
+		t.Fatalf("failed to open archive: %v", err)
+	}
+	defer f.Close()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatalf("failed to read gzip: %v", err)
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err != nil {
+			break
+		}
+		if hdr.Name == "metadata/log.json" {
+			data, _ := io.ReadAll(tr)
+			return string(data)
+		}
+	}
+	t.Fatal("metadata/log.json not found in archive")
+	return ""
+}
+
+// mustMarshal marshals v to JSON, failing the test on error.
+func mustMarshal(t *testing.T, v interface{}) json.RawMessage {
+	t.Helper()
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("failed to marshal: %v", err)
+	}
+	return data
+}
+
 // --- Export tests ---
 
 func TestExport_FullExport(t *testing.T) {
@@ -147,7 +188,7 @@ func TestExport_FullExport(t *testing.T) {
 	})
 
 	outPath := filepath.Join(dir, "full.tar.gz")
-	err := Export(objPath, metaPath, "bob", "", outPath)
+	err := Export(objPath, metaPath, "bob", "", "", outPath)
 	if err != nil {
 		t.Fatalf("Export() error: %v", err)
 	}
@@ -172,7 +213,7 @@ func TestExport_ManifestContents(t *testing.T) {
 	writeObject(t, objPath, "aabbcc001122334455667788990011aa", "content")
 
 	outPath := filepath.Join(dir, "test.tar.gz")
-	Export(objPath, metaPath, "alice", "", outPath)
+	Export(objPath, metaPath, "alice", "", "", outPath)
 
 	m := readManifestFromArchive(t, outPath)
 	if m.Source != "alice" {
@@ -198,7 +239,7 @@ func TestExport_DefaultOutputFilename(t *testing.T) {
 	os.Chdir(dir)
 	defer os.Chdir(orig)
 
-	err := Export(objPath, metaPath, "bob", "", "")
+	err := Export(objPath, metaPath, "bob", "", "", "")
 	if err != nil {
 		t.Fatalf("Export() error: %v", err)
 	}
@@ -212,7 +253,7 @@ func TestExport_EmptyObjectStore(t *testing.T) {
 	objPath, metaPath, dir := newTestEnv(t)
 	outPath := filepath.Join(dir, "empty.tar.gz")
 
-	err := Export(objPath, metaPath, "bob", "", outPath)
+	err := Export(objPath, metaPath, "bob", "", "", outPath)
 	if err != nil {
 		t.Fatalf("Export() error: %v", err)
 	}
@@ -238,7 +279,7 @@ func TestExport_PartialExport_SingleObject(t *testing.T) {
 	})
 
 	outPath := filepath.Join(dir, "partial.tar.gz")
-	err := Export(objPath, metaPath, "bob", "my-doc", outPath)
+	err := Export(objPath, metaPath, "bob", "my-doc", "", outPath)
 	if err != nil {
 		t.Fatalf("Export() error: %v", err)
 	}
@@ -262,7 +303,7 @@ func TestExport_PartialExport_ManifestHasName(t *testing.T) {
 	})
 
 	outPath := filepath.Join(dir, "partial.tar.gz")
-	Export(objPath, metaPath, "bob", "my-doc", outPath)
+	Export(objPath, metaPath, "bob", "my-doc", "", outPath)
 
 	m := readManifestFromArchive(t, outPath)
 	if m.Name != "my-doc" {
@@ -274,9 +315,149 @@ func TestExport_PartialExport_UnknownName(t *testing.T) {
 	objPath, metaPath, dir := newTestEnv(t)
 	outPath := filepath.Join(dir, "out.tar.gz")
 
-	err := Export(objPath, metaPath, "bob", "nonexistent", outPath)
+	err := Export(objPath, metaPath, "bob", "nonexistent", "", outPath)
 	if err == nil {
 		t.Error("expected error for unknown name, got nil")
+	}
+}
+
+func TestExport_NameAndNamespaceMutuallyExclusive(t *testing.T) {
+	objPath, metaPath, dir := newTestEnv(t)
+	outPath := filepath.Join(dir, "out.tar.gz")
+
+	err := Export(objPath, metaPath, "bob", "my-doc", "bob-ns", outPath)
+	if err == nil {
+		t.Error("expected error when both name and namespace are set, got nil")
+	}
+}
+
+func TestExport_NamespaceExport_UnionsReachableObjects(t *testing.T) {
+	objPath, metaPath, dir := newTestEnv(t)
+
+	doc1 := "aabbcc001122334455667788990011aa"
+	doc2 := "bbccdd112233445566778899001122bb"
+	unrelated := "ccddee223344556677889900112233cc"
+
+	writeObject(t, objPath, doc1, "first doc")
+	writeObject(t, objPath, doc2, "second doc")
+	writeObject(t, objPath, unrelated, "unrelated content")
+	writeLog(t, metaPath, []map[string]interface{}{
+		stashEntry(doc1, []string{}),
+		stashEntry(doc2, []string{}),
+		stashEntry(unrelated, []string{}),
+		nameEntry("bob/doc-one", doc1),
+		nameEntry("bob/doc-two", doc2),
+		nameEntry("alice/other-doc", unrelated),
+	})
+
+	outPath := filepath.Join(dir, "namespace.tar.gz")
+	err := Export(objPath, metaPath, "bob", "", "bob", outPath)
+	if err != nil {
+		t.Fatalf("Export() error: %v", err)
+	}
+
+	names := archiveContains(t, outPath)
+	if !names["objects/aa/bbcc001122334455667788990011aa"] {
+		t.Error("expected doc1 in namespace export")
+	}
+	if !names["objects/bb/ccdd112233445566778899001122bb"] {
+		t.Error("expected doc2 in namespace export")
+	}
+	if names["objects/cc/ddee223344556677889900112233cc"] {
+		t.Error("expected object from a different namespace to be excluded")
+	}
+}
+
+func TestExport_NamespaceExport_ManifestHasNamespace(t *testing.T) {
+	objPath, metaPath, dir := newTestEnv(t)
+	hash := "aabbcc001122334455667788990011aa"
+	writeObject(t, objPath, hash, "content")
+	writeLog(t, metaPath, []map[string]interface{}{
+		stashEntry(hash, []string{}),
+		nameEntry("bob/my-doc", hash),
+	})
+
+	outPath := filepath.Join(dir, "namespace.tar.gz")
+	Export(objPath, metaPath, "bob", "", "bob", outPath)
+
+	m := readManifestFromArchive(t, outPath)
+	if m.Namespace != "bob" {
+		t.Errorf("expected manifest namespace 'bob', got %q", m.Namespace)
+	}
+	if m.Name != "" {
+		t.Errorf("expected empty manifest name for namespace export, got %q", m.Name)
+	}
+}
+
+func TestExport_NamespaceExport_LogIncludesAllNamesInNamespace(t *testing.T) {
+	objPath, metaPath, dir := newTestEnv(t)
+	doc1 := "aabbcc001122334455667788990011aa"
+	doc2 := "bbccdd112233445566778899001122bb"
+	writeObject(t, objPath, doc1, "first doc")
+	writeObject(t, objPath, doc2, "second doc")
+	writeLog(t, metaPath, []map[string]interface{}{
+		stashEntry(doc1, []string{}),
+		stashEntry(doc2, []string{}),
+		nameEntry("bob/doc-one", doc1),
+		nameEntry("bob/doc-two", doc2),
+	})
+
+	outPath := filepath.Join(dir, "namespace.tar.gz")
+	Export(objPath, metaPath, "bob", "", "bob", outPath)
+
+	logData := readLogFromArchive(t, outPath)
+	if !strings.Contains(logData, "bob/doc-one") {
+		t.Error("expected 'bob/doc-one' name entry in filtered log")
+	}
+	if !strings.Contains(logData, "bob/doc-two") {
+		t.Error("expected 'bob/doc-two' name entry in filtered log")
+	}
+}
+
+func TestExport_NamespaceExport_UnknownNamespace(t *testing.T) {
+	objPath, metaPath, dir := newTestEnv(t)
+	outPath := filepath.Join(dir, "out.tar.gz")
+
+	err := Export(objPath, metaPath, "bob", "", "nonexistent", outPath)
+	if err == nil {
+		t.Error("expected error for unknown namespace, got nil")
+	}
+}
+
+func TestNamesInNamespace_FiltersByPrefix(t *testing.T) {
+	_, metaPath, _ := newTestEnv(t)
+	writeLog(t, metaPath, []map[string]interface{}{
+		nameEntry("bob/doc-one", "aabbcc001122334455667788990011aa"),
+		nameEntry("bob/doc-two", "bbccdd112233445566778899001122bb"),
+		nameEntry("alice/other-doc", "ccddee223344556677889900112233cc"),
+	})
+
+	names, err := namesInNamespace("bob", metaPath)
+	if err != nil {
+		t.Fatalf("namesInNamespace() error: %v", err)
+	}
+	if len(names) != 2 {
+		t.Fatalf("expected 2 names in 'bob' namespace, got %d: %v", len(names), names)
+	}
+}
+
+func TestNamesInNamespace_DeduplicatesUpdatedLabels(t *testing.T) {
+	_, metaPath, _ := newTestEnv(t)
+	writeLog(t, metaPath, []map[string]interface{}{
+		nameEntry("bob/doc-one", "aabbcc001122334455667788990011aa"),
+		{
+			"op":      "name-update",
+			"created": time.Now().UTC(),
+			"payload": mustMarshal(t, map[string]string{"label": "bob/doc-one", "hash": "bbccdd112233445566778899001122bb"}),
+		},
+	})
+
+	names, err := namesInNamespace("bob", metaPath)
+	if err != nil {
+		t.Fatalf("namesInNamespace() error: %v", err)
+	}
+	if len(names) != 1 {
+		t.Errorf("expected label to be deduplicated to 1 entry, got %d: %v", len(names), names)
 	}
 }
 
@@ -293,7 +474,7 @@ func TestImport_RoundTrip(t *testing.T) {
 	})
 
 	archivePath := filepath.Join(srcDir, "export.tar.gz")
-	if err := Export(srcObj, srcMeta, "bob", "", archivePath); err != nil {
+	if err := Export(srcObj, srcMeta, "bob", "", "", archivePath); err != nil {
 		t.Fatalf("Export() error: %v", err)
 	}
 
@@ -321,7 +502,7 @@ func TestImport_NamePrefixedWithSource(t *testing.T) {
 	})
 
 	archivePath := filepath.Join(srcDir, "export.tar.gz")
-	Export(srcObj, srcMeta, "bob", "", archivePath)
+	Export(srcObj, srcMeta, "bob", "", "", archivePath)
 
 	dstObj, dstMeta, _ := newTestEnv(t)
 	Import(archivePath, dstObj, dstMeta)
@@ -346,7 +527,7 @@ func TestImport_SkipsDuplicateObjects(t *testing.T) {
 	})
 
 	archivePath := filepath.Join(srcDir, "export.tar.gz")
-	Export(srcObj, srcMeta, "bob", "", archivePath)
+	Export(srcObj, srcMeta, "bob", "", "", archivePath)
 
 	// Pre-populate destination with different content at the same hash path.
 	dstObj, dstMeta, _ := newTestEnv(t)
@@ -370,7 +551,7 @@ func TestImport_MergesIntoExistingLog(t *testing.T) {
 	})
 
 	archivePath := filepath.Join(srcDir, "export.tar.gz")
-	Export(srcObj, srcMeta, "bob", "", archivePath)
+	Export(srcObj, srcMeta, "bob", "", "", archivePath)
 
 	// Destination already has one log entry.
 	dstObj, dstMeta, _ := newTestEnv(t)
@@ -499,5 +680,3 @@ func TestTraverse_Relation(t *testing.T) {
 		t.Errorf("expected 3 visited hashes (relation + from + to), got %d", len(visited))
 	}
 }
-
-

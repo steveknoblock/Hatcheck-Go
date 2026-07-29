@@ -455,6 +455,8 @@ func datesHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store
 // exportHandler streams a tar.gz archive to the client.
 // GET /export?source=bob
 // GET /export?source=bob&name=my-document
+// GET /export?source=bob&namespace=bob
+// name and namespace are mutually exclusive; specifying both is an error.
 func exportHandler(w http.ResponseWriter, req *http.Request, objPath, metaPath string, vr VerifiedRequest) {
 	if req.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -463,9 +465,14 @@ func exportHandler(w http.ResponseWriter, req *http.Request, objPath, metaPath s
 
 	source := req.URL.Query().Get("source")
 	name := req.URL.Query().Get("name")
+	namespace := req.URL.Query().Get("namespace")
 
 	if source == "" {
 		http.Error(w, "missing source parameter", http.StatusBadRequest)
+		return
+	}
+	if name != "" && namespace != "" {
+		http.Error(w, "name and namespace are mutually exclusive", http.StatusBadRequest)
 		return
 	}
 
@@ -477,7 +484,7 @@ func exportHandler(w http.ResponseWriter, req *http.Request, objPath, metaPath s
 	defer os.Remove(tmp.Name())
 	tmp.Close()
 
-	if err := share.Export(objPath, metaPath, source, name, tmp.Name()); err != nil {
+	if err := share.Export(objPath, metaPath, source, name, namespace, tmp.Name()); err != nil {
 		http.Error(w, "export failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

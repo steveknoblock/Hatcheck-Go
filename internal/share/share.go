@@ -14,26 +14,41 @@ import (
 
 // Manifest records provenance information for an export.
 type Manifest struct {
-	Source   string    `json:"source"`
-	Exported time.Time `json:"exported"`
-	Version  string    `json:"version"`
-	Objects  int       `json:"objects"`
-	Name     string    `json:"name,omitempty"` // set for partial exports
+	Source    string    `json:"source"`
+	Exported  time.Time `json:"exported"`
+	Version   string    `json:"version"`
+	Objects   int       `json:"objects"`
+	Name      string    `json:"name,omitempty"`      // set for single-name partial exports
+	Namespace string    `json:"namespace,omitempty"` // set for namespace-scoped partial exports
 }
 
 const manifestVersion = "1"
 
 // Export bundles the CAS objects and metadata log into a tar.gz archive.
-// If name is non-empty only the objects reachable from that name are exported.
+// Exactly one of name or namespace may be set (or neither, for a full export):
+//   - name and namespace both empty: full export of every object and the
+//     entire log.
+//   - name set: partial export of everything reachable from that single
+//     name.
+//   - namespace set: partial export of everything reachable from every
+//     name currently defined within that namespace, unioned together.
+//
 // The output file is named <source>.tar.gz unless outPath is specified.
-func Export(objPath, metaPath, source, name, outPath string) error {
+func Export(objPath, metaPath, source, name, namespace, outPath string) error {
+	if name != "" && namespace != "" {
+		return fmt.Errorf("name and namespace are mutually exclusive")
+	}
+
 	if outPath == "" {
 		outPath = source + ".tar.gz"
 	}
 
-	// Determine which hashes to export.
+	// Determine which hashes to export, and which name labels the partial
+	// export covers (used later to filter the log).
 	var hashes map[string]bool
-	if name != "" {
+	var names []string
+	switch {
+	case name != "":
 		var err error
 		hashes, err = reachableHashes(name, objPath, metaPath)
 		if err != nil {
@@ -41,6 +56,14 @@ func Export(objPath, metaPath, source, name, outPath string) error {
 		}
 		if len(hashes) == 0 {
 			return fmt.Errorf("name %q not found or has no reachable objects", name)
+		}
+		names = []string{name}
+
+	case namespace != "":
+		var err error
+		hashes, names, err = reachableHashesForNamespace(namespace, objPath, metaPath)
+		if err != nil {
+			return fmt.Errorf("resolving namespace %q: %w", namespace, err)
 		}
 	}
 
@@ -103,11 +126,12 @@ func Export(objPath, metaPath, source, name, outPath string) error {
 
 	// Write manifest.
 	manifest := Manifest{
-		Source:   source,
-		Exported: time.Now().UTC(),
-		Version:  manifestVersion,
-		Objects:  len(objects),
-		Name:     name,
+		Source:    source,
+		Exported:  time.Now().UTC(),
+		Version:   manifestVersion,
+		Objects:   len(objects),
+		Name:      name,
+		Namespace: namespace,
 	}
 	manifestData, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -131,7 +155,7 @@ func Export(objPath, metaPath, source, name, outPath string) error {
 	}
 
 	if hashes != nil {
-		logEntries = filterLog(logEntries, hashes, name)
+		logEntries = filterLog(logEntries, hashes, names)
 	}
 
 	if len(logEntries) > 0 {
@@ -260,6 +284,83 @@ func reachableHashes(name, objPath, metaPath string) (map[string]bool, error) {
 	return visited, nil
 }
 
+// namesInNamespace returns every distinct name label in the log whose
+// label begins with "<namespace>/", in first-seen order. It scans the raw
+// log directly (rather than going through metadata.Store) to stay
+// consistent with resolveNameFromLog and the rest of this package, which
+// operates on export/import archives independently of a running store.
+func namesInNamespace(namespace, metaPath string) ([]string, error) {
+	entries, err := readLog(metaPath)
+	if err != nil {
+		return nil, err
+	}
+
+	type envelope struct {
+		Op      string          `json:"op"`
+		Payload json.RawMessage `json:"payload"`
+	}
+	type namePayload struct {
+		Label string `json:"label"`
+		Hash  string `json:"hash"`
+	}
+
+	prefix := namespace + "/"
+	seen := make(map[string]bool)
+	var names []string
+
+	for _, raw := range entries {
+		var env envelope
+		if err := json.Unmarshal(raw, &env); err != nil {
+			continue
+		}
+		if env.Op != "name-create" && env.Op != "name-update" {
+			continue
+		}
+		var p namePayload
+		if err := json.Unmarshal(env.Payload, &p); err != nil {
+			continue
+		}
+		if !strings.HasPrefix(p.Label, prefix) {
+			continue
+		}
+		if !seen[p.Label] {
+			seen[p.Label] = true
+			names = append(names, p.Label)
+		}
+	}
+
+	return names, nil
+}
+
+// reachableHashesForNamespace returns the union of all hashes reachable
+// from the current hash of every name defined in the given namespace,
+// along with the list of names that were resolved (for later log
+// filtering). A single visited set is shared across all names so
+// overlapping subtrees — a Collection referenced by two documents in the
+// same namespace, for example — are only walked once.
+func reachableHashesForNamespace(namespace, objPath, metaPath string) (map[string]bool, []string, error) {
+	names, err := namesInNamespace(namespace, metaPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(names) == 0 {
+		return nil, nil, fmt.Errorf("namespace %q not found or has no names", namespace)
+	}
+
+	visited := make(map[string]bool)
+	for _, name := range names {
+		rootHash, err := resolveNameFromLog(name, metaPath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolving name %q: %w", name, err)
+		}
+		if err := traverse(rootHash, objPath, visited); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	return visited, names, nil
+}
+
 // traverse recursively visits a hash and all hashes reachable from it.
 func traverse(hash, objPath string, visited map[string]bool) error {
 	if visited[hash] {
@@ -356,8 +457,11 @@ func resolveNameFromLog(name, metaPath string) (string, error) {
 	return "", fmt.Errorf("name %q not found", name)
 }
 
-// filterLog returns only log entries relevant to the given hash set and name.
-func filterLog(entries []json.RawMessage, hashes map[string]bool, name string) []json.RawMessage {
+// filterLog returns only log entries relevant to the given hash set and
+// name labels. names may contain a single label (single-name export) or
+// several (namespace export); every name-create/name-update entry whose
+// label appears in names is retained, preserving each label's full history.
+func filterLog(entries []json.RawMessage, hashes map[string]bool, names []string) []json.RawMessage {
 	type envelope struct {
 		Op      string          `json:"op"`
 		Payload json.RawMessage `json:"payload"`
@@ -368,6 +472,11 @@ func filterLog(entries []json.RawMessage, hashes map[string]bool, name string) [
 	type namePayload struct {
 		Label string `json:"label"`
 		Hash  string `json:"hash"`
+	}
+
+	nameSet := make(map[string]bool, len(names))
+	for _, n := range names {
+		nameSet[n] = true
 	}
 
 	var result []json.RawMessage
@@ -393,7 +502,7 @@ func filterLog(entries []json.RawMessage, hashes map[string]bool, name string) [
 			if err := json.Unmarshal(env.Payload, &p); err != nil {
 				continue
 			}
-			if p.Label == name {
+			if nameSet[p.Label] {
 				result = append(result, raw)
 			}
 		}
