@@ -959,9 +959,9 @@
         <div class="ns-input-wrap" id="ns-input-wrap">
             <span class="ns-label">ns</span>
             <input class="ns-input" id="ns-input" type="text" placeholder="namespace"
-                   autocomplete="off" readonly
-                   onfocus="this.removeAttribute('readonly'); onNsFocus()"
+                   autocomplete="off"
                    oninput="onNsInput(this.value)"
+                   onfocus="onNsFocus()"
                    onblur="onNsBlur()">
             <div class="ns-dropdown" id="ns-dropdown"></div>
             <button class="ns-go" onclick="loadNamespace()">Go</button>
@@ -1251,6 +1251,12 @@ async function handleMagicLinkCallback() {
 document.addEventListener('DOMContentLoaded', () => {
     handleMagicLinkCallback().then(updateAuthUI);
     if (namespace) document.getElementById('ns-input').value = namespace;
+
+    // Chrome remembers values typed into this field across page loads and
+    // offers them as a native suggestion list, ignoring autocomplete="off".
+    // A name that changes every load gives it nothing to match against, so
+    // there's nothing for it to accumulate or offer.
+    document.getElementById('ns-input').name = 'ns-' + Math.random().toString(36).slice(2);
 });
 
 // Load capability for a specific hash from sessionStorage.
