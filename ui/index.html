@@ -959,9 +959,9 @@
         <div class="ns-input-wrap" id="ns-input-wrap">
             <span class="ns-label">ns</span>
             <input class="ns-input" id="ns-input" type="text" placeholder="namespace"
-                   autocomplete="off"
+                   autocomplete="off" readonly
+                   onfocus="this.removeAttribute('readonly'); onNsFocus()"
                    oninput="onNsInput(this.value)"
-                   onfocus="onNsFocus()"
                    onblur="onNsBlur()">
             <div class="ns-dropdown" id="ns-dropdown"></div>
             <button class="ns-go" onclick="loadNamespace()">Go</button>
