@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"encoding/json"
+	"sort"
 	"strings"
 )
 
@@ -40,8 +41,10 @@ func (n *NameIndex) Query(key string) []string {
 	return []string{}
 }
 
-// ListNamespace returns all label/hash pairs whose label starts with prefix.
-// The prefix is stripped from the returned labels.
+// ListNamespace returns all label/hash pairs whose label starts with prefix,
+// sorted alphabetically by (stripped) label. Iterating n.data directly would
+// return entries in Go's randomized map order — sorting here gives callers
+// (the /names endpoint, the UI's name list) a stable order across requests.
 func (n *NameIndex) ListNamespace(prefix string) []NameEntry {
 	var results []NameEntry
 	for label, hash := range n.data {
@@ -52,10 +55,14 @@ func (n *NameIndex) ListNamespace(prefix string) []NameEntry {
 			})
 		}
 	}
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Label < results[j].Label
+	})
 	return results
 }
 
-// Namespaces returns all unique namespace prefixes found in the name index.
+// Namespaces returns all unique namespace prefixes found in the name index,
+// sorted alphabetically for a stable order (see ListNamespace).
 // A namespace is the portion of a label before the first "/".
 // Labels without a "/" are returned as-is as their own namespace.
 func (n *NameIndex) Namespaces() []string {
@@ -72,5 +79,6 @@ func (n *NameIndex) Namespaces() []string {
 	for ns := range seen {
 		result = append(result, ns)
 	}
+	sort.Strings(result)
 	return result
 }
