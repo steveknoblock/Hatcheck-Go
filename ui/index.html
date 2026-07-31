@@ -946,6 +946,7 @@
         <button class="btn btn-ghost" onclick="newCollection()" title="Build a new collection from existing objects">+ New Collection</button>
         <button class="btn btn-ghost" onclick="triggerImport()" title="Import a shared archive">↓ Import</button>
         <input type="file" id="import-file-input" accept=".tar.gz,.gz" style="display:none" onchange="handleImportFile(this)">
+        <button class="btn btn-ghost" id="export-btn" onclick="exportNamespace()" disabled title="Export the current namespace">↑ Export</button>
         <div class="status">
             <div class="status-dot"></div>
             <span id="status-text">ready</span>
@@ -995,9 +996,10 @@
             </div>
         </div>
 
-        <!-- Editor header: share + save always visible above tab panels -->
+        <!-- Save always visible above tab panels. Export lives in the top
+             toolbar now (see header), since it exports the whole current
+             namespace rather than just the document open here. -->
         <div class="editor-header" id="editor-header">
-            <button class="btn btn-ghost" id="share-btn" onclick="shareDocument()" disabled title="Share this document">↑ Share</button>
             <button class="btn btn-primary" id="save-btn" onclick="saveContent()" disabled>Save</button>
         </div>
 
@@ -1391,6 +1393,7 @@ async function loadNamespace() {
     currentHash  = null;
     currentLabel = null;
     editorDirty  = false;
+    document.getElementById('export-btn').disabled = true;
     renderBreadcrumb();
     renderEditor(null, null);
 
@@ -1399,6 +1402,7 @@ async function loadNamespace() {
         if (!res.ok) throw new Error('Failed to load namespace');
         nameList = await res.json();
         renderNameList();
+        document.getElementById('export-btn').disabled = false;
     } catch (err) {
         showToast('Error', err.message, true);
     }
@@ -1698,7 +1702,6 @@ function renderEditor(hash, content, readOnly = false) {
     currentHash = hash;
     const editor   = document.getElementById('editor');
     const saveBtn  = document.getElementById('save-btn');
-    const shareBtn = document.getElementById('share-btn');
     const hashEl   = document.getElementById('current-hash');
     const relTab   = document.getElementById('tab-relation-btn');
 
@@ -1709,7 +1712,6 @@ function renderEditor(hash, content, readOnly = false) {
         : 'Write something here…\n\nUse #hashtags to tag objects for discovery.';
 
     saveBtn.disabled  = readOnly || (!hash && pathStack.length === 0);
-    shareBtn.disabled = !currentLabel;
     hashEl.textContent = hash ? hash : '—';
     editorDirty = false;
 
@@ -2463,12 +2465,17 @@ function renderBreadcrumb() {
     el.innerHTML = ns + parts.join('<span class="crumb-sep"> / </span>');
 }
 
-// ── Share ──
-async function shareDocument() {
-    if (!namespace || !currentLabel) return;
+// ── Export ──
+// Exports the whole current namespace as a tar.gz archive — every name
+// currently defined in it, and everything reachable from those names.
+// Previously this button ("Share") exported just the single open
+// document; it now covers the whole namespace, so it lives in the top
+// toolbar rather than the per-document editor header, and only needs a
+// namespace loaded rather than a document open.
+async function exportNamespace() {
+    if (!namespace) return;
 
-    const fullName = namespace + '/' + currentLabel;
-    const url = `${API}/export?source=${encodeURIComponent(namespace)}&name=${encodeURIComponent(fullName)}`;
+    const url = `${API}/export?source=${encodeURIComponent(namespace)}&namespace=${encodeURIComponent(namespace)}`;
 
     // A plain <a href="..."> navigation sends no custom headers at all —
     // not Authorization, not X-User-ID, not X-Capability-Token — so it
@@ -2492,7 +2499,7 @@ async function shareDocument() {
         document.body.removeChild(a);
         URL.revokeObjectURL(blobUrl);
 
-        showToast('Sharing', `${fullName} → ${namespace}.tar.gz`);
+        showToast('Exported', `${namespace} → ${namespace}.tar.gz`);
     } catch (err) {
         showToast('Export failed', err.message, true);
     }
