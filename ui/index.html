@@ -112,6 +112,67 @@
             color: var(--accent);
         }
 
+        .ns-recent {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            padding: 8px 10px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .ns-recent:empty { display: none; }
+
+        .ns-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 6px 3px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text-dim);
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.1s;
+            max-width: 160px;
+        }
+
+        .ns-pill span.ns-pill-label {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .ns-pill:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .ns-pill.active {
+            background: rgba(51,119,170,0.12);
+            border-color: var(--accent);
+            color: var(--accent);
+            font-weight: 700;
+        }
+
+        .ns-pill-remove {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            color: var(--text-muted);
+            font-size: 12px;
+            line-height: 1;
+            flex-shrink: 0;
+        }
+
+        .ns-pill-remove:hover {
+            background: rgba(0,0,0,0.12);
+            color: var(--text);
+        }
+
         .ns-go {
             padding: 4px 10px;
             background: var(--accent);
@@ -732,6 +793,94 @@
             text-align: center;
         }
 
+        /* ── Map tab (relations treemap) ── */
+
+        .map-metric-tabs {
+            display: flex;
+            gap: 6px;
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .map-metric-btn {
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text-dim);
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.1s;
+        }
+
+        .map-metric-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+        .map-metric-btn.active {
+            background: rgba(51,119,170,0.12);
+            border-color: var(--accent);
+            color: var(--accent);
+            font-weight: 700;
+        }
+
+        /* Fixed-aspect-ratio box (padding-bottom trick) so the treemap's
+           percentage-positioned tiles always have a stable coordinate space
+           to lay out against, regardless of panel width. */
+        .map-treemap-wrap {
+            position: relative;
+            width: 100%;
+            padding-bottom: 60%;
+        }
+
+        .map-treemap {
+            position: absolute;
+            inset: 0;
+            margin: 12px;
+        }
+
+        .map-tile {
+            position: absolute;
+            box-sizing: border-box;
+            border: 1px solid var(--bg);
+            padding: 6px 8px;
+            overflow: hidden;
+            cursor: pointer;
+            background: var(--surface);
+            transition: filter 0.1s;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+        }
+
+        .map-tile:hover { filter: brightness(1.08); }
+
+        .map-tile.map-tile-out { border-left: 3px solid var(--relation); }
+        .map-tile.map-tile-in  { border-left: 3px solid var(--accent); }
+
+        .map-tile-rel {
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .map-tile-label {
+            font-size: 12px;
+            color: var(--text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .map-empty {
+            padding: 24px 16px;
+            font-size: 11px;
+            color: var(--text-muted);
+            text-align: center;
+        }
+
         /* ── Collection builder ──
            A mode, not a per-object tab: building a Collection means
            composing several existing objects into a new one, so it
@@ -967,6 +1116,7 @@
             <div class="ns-dropdown" id="ns-dropdown"></div>
             <button class="ns-go" onclick="loadNamespace()">Go</button>
         </div>
+        <div class="ns-recent" id="ns-recent"></div>
         <div class="browse-toggle">
             <button class="browse-toggle-btn active" id="browse-toggle-namespace" onclick="setBrowseMode('namespace')">By namespace</button>
             <button class="browse-toggle-btn" id="browse-toggle-date" onclick="setBrowseMode('date')">By date</button>
@@ -991,6 +1141,7 @@
         <div class="tab-strip" id="tab-strip">
             <button class="tab-btn active" id="tab-editor-btn" onclick="switchTab('editor')">Editor</button>
             <button class="tab-btn tab-relation" id="tab-relation-btn" onclick="switchTab('relations')" disabled>Relations<span class="tab-badge" id="rel-tab-badge" style="display:none"></span></button>
+            <button class="tab-btn tab-map" id="tab-map-btn" onclick="switchTab('map')" disabled>Map</button>
             <div class="tab-strip-hash">
                 <span id="current-hash">—</span>
             </div>
@@ -1076,6 +1227,25 @@
                         <div class="rel-list-empty">No relations for this object.</div>
                     </div>
 
+                </div>
+            </div>
+
+            <!-- Map tab: a treemap of this object's direct relations (both
+                 outgoing and incoming, mixed together — direction is shown
+                 per-tile rather than as separate regions), tile size driven
+                 by whichever metric is selected. Always one level deep —
+                 clicking a tile navigates to that object via the normal
+                 navigateToHash() path, which re-renders the treemap
+                 centered on the new object rather than nesting deeper. -->
+            <div class="tab-panel" id="panel-map">
+                <div class="map-metric-tabs">
+                    <button class="map-metric-btn active" id="map-metric-fanout" onclick="setMapMetric('fanout')">Fan-out</button>
+                    <button class="map-metric-btn" id="map-metric-recency" onclick="setMapMetric('recency')">Recency</button>
+                    <button class="map-metric-btn" id="map-metric-tags" onclick="setMapMetric('tags')">Tag overlap</button>
+                </div>
+                <div class="map-treemap-wrap">
+                    <div class="map-treemap" id="map-treemap"></div>
+                    <div class="map-empty" id="map-empty" style="display:none">No relations for this object.</div>
                 </div>
             </div>
 
@@ -1253,6 +1423,7 @@ async function handleMagicLinkCallback() {
 document.addEventListener('DOMContentLoaded', () => {
     handleMagicLinkCallback().then(updateAuthUI);
     if (namespace) document.getElementById('ns-input').value = namespace;
+    renderRecentNamespaces();
 
     // Chrome remembers values typed into this field across page loads and
     // offers them as a native suggestion list, ignoring autocomplete="off".
@@ -1330,6 +1501,63 @@ document.addEventListener('mouseup', () => {
     document.body.style.userSelect = '';
 });
 
+// ── Recent namespaces (quick-switch pills) ──
+// Persisted in localStorage (unlike the *current* namespace, which lives in
+// sessionStorage) so your recent list survives across logins/tabs. This is
+// deliberately just "namespaces you've visited", not an ownership concept —
+// Hatcheck has no notion of namespace ownership, so this is purely a
+// client-side convenience for jumping back to places you've been.
+const RECENT_NS_KEY = 'hatcheck-recent-namespaces';
+const RECENT_NS_MAX = 8;
+
+function loadRecentNamespaces() {
+    try {
+        const list = JSON.parse(localStorage.getItem(RECENT_NS_KEY));
+        return Array.isArray(list) ? list : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function saveRecentNamespaces(list) {
+    try {
+        localStorage.setItem(RECENT_NS_KEY, JSON.stringify(list));
+    } catch (e) {}
+}
+
+// Called after a namespace successfully loads — moves it to the front of
+// the recent list (deduping), trims to RECENT_NS_MAX, and re-renders.
+function addRecentNamespace(ns) {
+    let list = loadRecentNamespaces().filter(n => n !== ns);
+    list.unshift(ns);
+    if (list.length > RECENT_NS_MAX) list = list.slice(0, RECENT_NS_MAX);
+    saveRecentNamespaces(list);
+    renderRecentNamespaces();
+}
+
+function removeRecentNamespace(ns, event) {
+    event.stopPropagation(); // don't also trigger the pill's own switch-to click
+    saveRecentNamespaces(loadRecentNamespaces().filter(n => n !== ns));
+    renderRecentNamespaces();
+}
+
+function switchToNamespace(ns) {
+    document.getElementById('ns-input').value = ns;
+    loadNamespace();
+}
+
+function renderRecentNamespaces() {
+    const el = document.getElementById('ns-recent');
+    const list = loadRecentNamespaces();
+
+    el.innerHTML = list.map(ns => `
+        <span class="ns-pill ${ns === namespace ? 'active' : ''}" onclick="switchToNamespace('${escAttr(ns)}')" title="Switch to ${escHtml(ns)}">
+            <span class="ns-pill-label">${escHtml(ns)}</span>
+            <span class="ns-pill-remove" onclick="removeRecentNamespace('${escAttr(ns)}', event)" title="Remove from recent">×</span>
+        </span>
+    `).join('');
+}
+
 // ── Namespace autocomplete ──
 let allNamespaces = [];
 let nsSelectedIndex = -1;
@@ -1403,6 +1631,7 @@ async function loadNamespace() {
         nameList = await res.json();
         renderNameList();
         document.getElementById('export-btn').disabled = false;
+        addRecentNamespace(namespace);
     } catch (err) {
         showToast('Error', err.message, true);
     }
@@ -1685,8 +1914,10 @@ function switchTab(tab) {
 
     document.getElementById('tab-editor-btn').classList.toggle('active', tab === 'editor');
     document.getElementById('tab-relation-btn').classList.toggle('active', tab === 'relations');
+    document.getElementById('tab-map-btn').classList.toggle('active', tab === 'map');
     document.getElementById('panel-editor').classList.toggle('active', tab === 'editor');
     document.getElementById('panel-relations').classList.toggle('active', tab === 'relations');
+    document.getElementById('panel-map').classList.toggle('active', tab === 'map');
 
     // Save/share only meaningful in editor tab.
     const editorHeader = document.getElementById('editor-header');
@@ -1694,6 +1925,9 @@ function switchTab(tab) {
 
     if (tab === 'relations' && currentHash) {
         loadRelationsPanel(currentHash);
+    }
+    if (tab === 'map' && currentHash) {
+        loadMapPanel(currentHash);
     }
 }
 
@@ -1715,8 +1949,9 @@ function renderEditor(hash, content, readOnly = false) {
     hashEl.textContent = hash ? hash : '—';
     editorDirty = false;
 
-    // Enable Relations tab only when a hash is loaded.
+    // Enable Relations/Map tabs only when a hash is loaded.
     relTab.disabled = !hash;
+    document.getElementById('tab-map-btn').disabled = !hash;
 
     // Always fetch relations when a document opens, regardless of which
     // tab is active — this is what makes the count badge on the tab
@@ -1726,6 +1961,16 @@ function renderEditor(hash, content, readOnly = false) {
         loadRelationsPanel(hash);
     } else {
         document.getElementById('rel-tab-badge').style.display = 'none';
+    }
+
+    // Unlike Relations, the Map tab has no ambient badge to keep fresh —
+    // there's nothing useful to show about it when it isn't the active
+    // tab, so only reload it if it's actually what's currently visible.
+    // (Selecting the Map tab itself, via switchTab(), covers the case of
+    // switching to it while already sitting on a hash; this covers
+    // navigating to a *different* hash while the Map tab is already open.)
+    if (hash && currentTab === 'map') {
+        loadMapPanel(hash);
     }
 
     // Update rel-from display.
@@ -1849,6 +2094,234 @@ function renderTreeRelations(hash, outgoing, incoming) {
 
     html += '</div>';
     tree.insertAdjacentHTML('beforeend', html);
+}
+
+// ── Map tab (relations treemap) ──
+//
+// Shows the current object's direct relations (outgoing and incoming
+// mixed into one set of tiles) as a treemap, tile area driven by whichever
+// metric is selected. Always one level deep: clicking a tile calls
+// navigateToHash(), the same path the inline tree relation links use,
+// which re-renders the whole app centered on that object — including,
+// since renderEditor() checks currentTab, reloading this treemap centered
+// on the new object. There's no separate "map-local" navigation state to
+// keep in sync with the rest of the app.
+
+let mapMetric = 'fanout'; // 'fanout' | 'recency' | 'tags'
+let mapTiles  = [];       // cached per-neighbor data for the current center, so switching
+                          // metrics re-renders instantly without re-fetching anything
+
+async function loadMapPanel(hash) {
+    if (!hash) return;
+
+    const treemapEl = document.getElementById('map-treemap');
+    const emptyEl    = document.getElementById('map-empty');
+
+    try {
+        const [relRes, metaRes] = await Promise.all([
+            apiFetch(`${API}/relations?hash=${hash}`),
+            apiFetch(`${API}/object-meta?hash=${hash}`),
+        ]);
+        if (!relRes.ok) throw new Error('Failed to load relations');
+        const { outgoing, incoming } = await relRes.json();
+        const centerMeta = metaRes.ok ? await metaRes.json() : { tags: [] };
+        const centerTags = centerMeta.tags || [];
+
+        // Each relation is its own tile, even if two relations happen to
+        // point at the same neighbor hash — this mirrors the existing
+        // per-object relations list, which also doesn't dedupe by neighbor.
+        const edges = [
+            ...outgoing.map(r => ({ neighborHash: r.to,   rel: r.rel, direction: 'out' })),
+            ...incoming.map(r => ({ neighborHash: r.from, rel: r.rel, direction: 'in'  })),
+        ];
+
+        if (edges.length === 0) {
+            mapTiles = [];
+            treemapEl.innerHTML = '';
+            emptyEl.style.display = '';
+            return;
+        }
+        emptyEl.style.display = 'none';
+
+        // Fetch each neighbor's own meta (tags/created/kind) and relation
+        // count (fan-out) in parallel — one round trip pair per neighbor,
+        // not per edge, since two edges can share a neighbor.
+        const neighborHashes = [...new Set(edges.map(e => e.neighborHash))];
+        const neighborData = {};
+        await Promise.all(neighborHashes.map(async (nh) => {
+            const [nMetaRes, nRelRes] = await Promise.all([
+                apiFetch(`${API}/object-meta?hash=${nh}`),
+                apiFetch(`${API}/relations?hash=${nh}`),
+            ]);
+            const nMeta = nMetaRes.ok ? await nMetaRes.json() : { tags: [], created: null };
+            const nRel  = nRelRes.ok ? await nRelRes.json() : { outgoing: [], incoming: [] };
+            const overlap = (nMeta.tags || []).filter(t => centerTags.includes(t)).length;
+            neighborData[nh] = {
+                fanOut: (nRel.outgoing || []).length + (nRel.incoming || []).length,
+                created: nMeta.created ? new Date(nMeta.created) : null,
+                tagOverlap: overlap,
+            };
+        }));
+
+        mapTiles = edges.map(e => {
+            const known = namesByHash[e.neighborHash];
+            const label = known ? known.label : e.neighborHash.slice(0, 8) + '…';
+            return {
+                hash: e.neighborHash,
+                rel: e.rel,
+                direction: e.direction,
+                label,
+                ...neighborData[e.neighborHash],
+            };
+        });
+
+        renderMapTreemap();
+    } catch (err) {
+        showToast('Error', err.message, true);
+    }
+}
+
+function setMapMetric(metric) {
+    mapMetric = metric;
+    ['fanout', 'recency', 'tags'].forEach(m => {
+        document.getElementById('map-metric-' + m).classList.toggle('active', m === metric);
+    });
+    renderMapTreemap();
+}
+
+// weightFor returns this tile's raw (unnormalized) size driver for the
+// currently selected metric. Every metric gets a +1 floor so a tile with
+// "nothing" for that metric (0 fan-out, 0 tag overlap) still renders at a
+// small but visible size rather than collapsing to zero area.
+function weightFor(tile, metric, recencyRange) {
+    if (metric === 'fanout') return tile.fanOut + 1;
+    if (metric === 'tags') return tile.tagOverlap + 1;
+    if (metric === 'recency') {
+        if (!tile.created || !recencyRange || recencyRange.span <= 0) return 1;
+        // Normalize within this neighbor set specifically — raw epoch
+        // timestamps are all so close together (relative to their own
+        // magnitude) that tile sizes would look nearly identical otherwise.
+        const age = tile.created.getTime() - recencyRange.min;
+        return (age / recencyRange.span) * 9 + 1; // scale to roughly 1..10
+    }
+    return 1;
+}
+
+function renderMapTreemap() {
+    const treemapEl = document.getElementById('map-treemap');
+    if (mapTiles.length === 0) return;
+
+    let recencyRange = null;
+    if (mapMetric === 'recency') {
+        const times = mapTiles.filter(t => t.created).map(t => t.created.getTime());
+        if (times.length > 0) {
+            const min = Math.min(...times), max = Math.max(...times);
+            recencyRange = { min, span: max - min };
+        }
+    }
+
+    const weights = mapTiles.map(t => weightFor(t, mapMetric, recencyRange));
+    const rects = computeTreemapLayout(weights, 1000, 1000); // logical unit space; positioned as %
+
+    treemapEl.innerHTML = mapTiles.map((tile, i) => {
+        const r = rects[i];
+        if (!r) return '';
+        const style = `left:${r.x / 10}%; top:${r.y / 10}%; width:${r.w / 10}%; height:${r.h / 10}%;`;
+        // Smaller tiles get smaller, less verbose labels — a tile a few
+        // percent of the total area can't usefully show both the relation
+        // type and a long title.
+        const area = r.w * r.h;
+        const fontSize = Math.max(10, Math.min(14, 10 + area / 20000));
+        return `
+            <div class="map-tile map-tile-${tile.direction}" style="${style} font-size:${fontSize}px"
+                 onclick="navigateToHash('${escAttr(tile.hash)}')"
+                 title="${tile.direction === 'out' ? '→' : '←'} ${escHtml(tile.rel)} ${escHtml(tile.label)}">
+                <div class="map-tile-rel">${tile.direction === 'out' ? '→' : '←'} ${escHtml(tile.rel)}</div>
+                <div class="map-tile-label">${escHtml(tile.label)}</div>
+            </div>
+        `;
+    }).join('');
+}
+
+// computeTreemapLayout implements the "squarified" treemap algorithm
+// (Bruls, Huizing & van Wijk, 1999) for a flat (non-hierarchical) list of
+// weights, laying them out to fill a containerW x containerH rectangle
+// while keeping individual tiles as close to square as the weights allow
+// (rather than, say, one degenerate sliver per item). Returns an array of
+// {x, y, w, h} in the same order as weights.
+function computeTreemapLayout(weights, containerW, containerH) {
+    const total = weights.reduce((a, b) => a + b, 0);
+    if (total <= 0 || weights.length === 0) return [];
+
+    const totalArea = containerW * containerH;
+    const items = weights.map((w, i) => ({ area: (w / total) * totalArea, i }));
+    const rects = new Array(items.length);
+
+    let x = 0, y = 0, w = containerW, h = containerH;
+    let remaining = items.slice();
+
+    function worst(row, length) {
+        const sum  = row.reduce((a, b) => a + b.area, 0);
+        const rmax = Math.max(...row.map(r => r.area));
+        const rmin = Math.min(...row.map(r => r.area));
+        const s2 = sum * sum;
+        return Math.max((length * length * rmax) / s2, s2 / (length * length * rmin));
+    }
+
+    // wide: the remaining rectangle is wider than it is tall, so the next
+    // row is cut as a *vertical* strip from the left edge (thickness =
+    // strip width, consumed from w), with items inside it stacked
+    // top-to-bottom. The opposite case cuts a horizontal strip from the
+    // top instead (thickness = strip height, consumed from h), with items
+    // stacked left-to-right. Either way, "length" is the side the row's
+    // items are laid out along — always the *shorter* side of what's left,
+    // which is what keeps tiles closer to square.
+    function layoutRow(row, length, wide) {
+        const sum = row.reduce((a, b) => a + b.area, 0);
+        const thickness = sum / length;
+        let offset = 0;
+        row.forEach(r => {
+            const itemLength = r.area / thickness;
+            if (wide) {
+                rects[r.i] = { x: x, y: y + offset, w: thickness, h: itemLength };
+            } else {
+                rects[r.i] = { x: x + offset, y: y, w: itemLength, h: thickness };
+            }
+            offset += itemLength;
+        });
+        return thickness;
+    }
+
+    while (remaining.length > 0) {
+        const wide = w >= h;
+        const length = wide ? h : w;
+        let row = [remaining[0]];
+        let i = 1;
+        while (i < remaining.length) {
+            const candidate = row.concat([remaining[i]]);
+            if (worst(candidate, length) <= worst(row, length)) {
+                row = candidate;
+                i++;
+            } else {
+                break;
+            }
+        }
+        const thickness = layoutRow(row, length, wide);
+        if (wide) {
+            x += thickness;
+            w -= thickness;
+        } else {
+            y += thickness;
+            h -= thickness;
+        }
+        remaining = remaining.slice(row.length);
+        // Degenerate guard: if the remaining rectangle has collapsed to
+        // nothing (can happen with floating-point weights summing right
+        // at the edge), stop rather than looping on a zero-size remainder.
+        if (w <= 0 || h <= 0) break;
+    }
+
+    return rects;
 }
 
 // Navigate to an object by hash — look it up in nameList first, then descend.

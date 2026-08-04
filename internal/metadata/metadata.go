@@ -416,6 +416,22 @@ func (s *Store) AllDates() []string {
 	return []string{}
 }
 
+// CreatedAt returns the timestamp hash was created at, or the zero
+// time.Time if it's never appeared in a creation log entry. Used to power
+// recency-based views (e.g. sizing a relations treemap by how recently
+// each related object was created) without walking the log per hash.
+func (s *Store) CreatedAt(hash string) time.Time {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if idx, ok := s.indexMap["created"]; ok {
+		if cq, ok := idx.(CreatedQuerier); ok {
+			return cq.Created(hash)
+		}
+	}
+	return time.Time{}
+}
+
 // KindOf returns the kind of object hash is — "stash", "collection", or
 // "relation" — or "" if it's never appeared in a creation log entry. Used
 // to label entries in a listing (e.g. distinguishing a Collection from a

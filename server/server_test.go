@@ -69,6 +69,7 @@ func newTestEnv(t *testing.T) (store *cas.Store, objPath, metaPath string, meta 
 		metadata.NewRelationIndex(),
 		metadata.NewCapabilityIndex(),
 		metadata.NewKindIndex(),
+		metadata.NewCreatedIndex(),
 	)
 	if err != nil {
 		t.Fatalf("failed to create metadata store: %v", err)
@@ -758,6 +759,89 @@ func TestTagsHandler_WrongMethod(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/tags", nil)
 	w := httptest.NewRecorder()
 	tagsHandler(w, req, meta, vrEmpty())
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405, got %d", w.Code)
+	}
+}
+
+// --- objectMetaHandler ---
+
+func TestObjectMetaHandler_MissingHash(t *testing.T) {
+	_, _, _, meta := newTestEnv(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/object-meta", nil)
+	w := httptest.NewRecorder()
+	objectMetaHandler(w, req, meta, vrEmpty())
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestObjectMetaHandler_UnknownHash(t *testing.T) {
+	_, _, _, meta := newTestEnv(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/object-meta?hash=never-seen", nil)
+	w := httptest.NewRecorder()
+	objectMetaHandler(w, req, meta, vrEmpty())
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+	var result struct {
+		Tags    []string  `json:"tags"`
+		Created time.Time `json:"created"`
+		Kind    string    `json:"kind"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &result)
+	if len(result.Tags) != 0 {
+		t.Errorf("expected no tags for unknown hash, got %v", result.Tags)
+	}
+	if !result.Created.IsZero() {
+		t.Errorf("expected zero created time for unknown hash, got %v", result.Created)
+	}
+	if result.Kind != "" {
+		t.Errorf("expected empty kind for unknown hash, got %q", result.Kind)
+	}
+}
+
+func TestObjectMetaHandler_KnownHash(t *testing.T) {
+	store, _, _, meta := newTestEnv(t)
+	before := time.Now().UTC()
+	hash := stashOne(t, store, meta, "content with #ideas and #notes")
+	after := time.Now().UTC()
+
+	req := httptest.NewRequest(http.MethodGet, "/object-meta?hash="+hash, nil)
+	w := httptest.NewRecorder()
+	objectMetaHandler(w, req, meta, vrEmpty())
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var result struct {
+		Tags    []string  `json:"tags"`
+		Created time.Time `json:"created"`
+		Kind    string    `json:"kind"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &result)
+	if len(result.Tags) != 2 {
+		t.Errorf("expected 2 tags, got %v", result.Tags)
+	}
+	if result.Created.Before(before) || result.Created.After(after) {
+		t.Errorf("expected created between %v and %v, got %v", before, after, result.Created)
+	}
+	if result.Kind != "stash" {
+		t.Errorf("expected kind 'stash', got %q", result.Kind)
+	}
+}
+
+func TestObjectMetaHandler_WrongMethod(t *testing.T) {
+	_, _, _, meta := newTestEnv(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/object-meta?hash=abc", nil)
+	w := httptest.NewRecorder()
+	objectMetaHandler(w, req, meta, vrEmpty())
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("expected 405, got %d", w.Code)
