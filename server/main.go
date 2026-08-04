@@ -415,6 +415,43 @@ func relationsHandler(w http.ResponseWriter, req *http.Request, meta *metadata.S
 	})
 }
 
+// objectMetaHandler returns per-hash metadata not otherwise available in a
+// single call: tags, creation timestamp, and kind. Added for the relations
+// treemap, which needs this for every direct neighbor of whatever object
+// is currently open — bundling it into one endpoint avoids three separate
+// round trips (tags, /query?index=created, /query?index=kind) per neighbor.
+// GET /object-meta?hash=<hash>
+func objectMetaHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, vr VerifiedRequest) {
+	if req.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	hash := req.URL.Query().Get("hash")
+	if hash == "" {
+		http.Error(w, "missing hash parameter", http.StatusBadRequest)
+		return
+	}
+
+	tags := meta.TagsForHash(hash)
+	if tags == nil {
+		tags = []string{}
+	}
+
+	type objectMetaResponse struct {
+		Tags    []string  `json:"tags"`
+		Created time.Time `json:"created"`
+		Kind    string    `json:"kind"`
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(objectMetaResponse{
+		Tags:    tags,
+		Created: meta.CreatedAt(hash),
+		Kind:    meta.KindOf(hash),
+	})
+}
+
 // tagsHandler returns all known tag keys from the tag index.
 // GET /tags
 func tagsHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, vr VerifiedRequest) {
@@ -629,6 +666,7 @@ func main() {
 		metadata.NewCapabilityIndex(),
 		metadata.NewRoleIndex(),
 		metadata.NewKindIndex(),
+		metadata.NewCreatedIndex(),
 	)
 	if err != nil {
 		log.Fatalf("failed to load metadata store: %v", err)
