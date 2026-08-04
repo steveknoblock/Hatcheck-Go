@@ -1,5 +1,7 @@
 package metadata
 
+import "time"
+
 // --- Index interface ---
 
 // Index is implemented by any type that can be built from log entries and queried.
@@ -38,6 +40,13 @@ type DateLister interface {
 // of object a given hash is, without fetching and parsing its content.
 type KindQuerier interface {
 	Kind(hash string) string
+}
+
+// CreatedQuerier is implemented by indexes that support looking up when a
+// given hash was created, without walking the log to find its creation
+// entry.
+type CreatedQuerier interface {
+	Created(hash string) time.Time
 }
 
 // CapabilityQuerier is implemented by indexes that support rich capability
