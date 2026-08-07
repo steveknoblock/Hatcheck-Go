@@ -5,7 +5,6 @@ import (
 	"math"
 	"net/http"
 	"sync"
-	"time"
 
 	"golang.org/x/time/rate"
 )
@@ -98,29 +97,27 @@ type RateLimiters struct {
 	Admin *RateLimitMiddleware // /export, /import, /capability, /capability/revoke
 }
 
-// NewRateLimiters constructs the three pools. Call once from main().
+// NewRateLimiters constructs all three pools from Config, which resolves
+// each pool's steady-state rate and burst from its HATCHECK_RATE_* env var
+// (see config.go), falling back to the defaults documented there. Call once
+// from main().
 //
-// Starting limits — adjust based on observed usage:
-//
-//	Read:  3 requests/second sustained, burst of 30
-//	Write: 1 request/5 seconds sustained, burst of 4
-//	Admin: 1 request/30 seconds sustained, burst of 2
-//
-// Read was bumped from (1/s, burst 10) after the Map tab's treemap started
-// tripping 429s on the second click: loadMapPanel fires up to
-// 2 × (1 + neighbor count) GET requests concurrently via Promise.all for
-// every navigation (relations + object-meta for the center, plus the same
-// pair per unique neighbor). A node with even a handful of relations can
-// burn through the old burst of 10 in one click, leaving too little
-// headroom to immediately click again. The UI-side fix (caching
-// object-meta and neighbor fan-out per hash, see loadMapPanel in
-// ui/index.html) cuts repeat-visit request volume close to zero, but a
-// first-time visit to a densely-connected object still needs real
-// headroom here rather than relying on caching alone.
-func NewRateLimiters() *RateLimiters {
+// The Read default burst was raised from 10 to 30 (config.go) after the Map
+// tab's treemap started tripping 429s on the second click: loadMapPanel
+// fires up to 2 × (1 + neighbor count) GET requests concurrently via
+// Promise.all for every navigation (relations + object-meta for the center,
+// plus the same pair per unique neighbor). A node with even a handful of
+// relations could burn through a burst of 10 in one click, leaving no
+// headroom to immediately click again. The UI-side fix (caching object-meta
+// and neighbor fan-out per hash, see loadMapPanel in ui/index.html) cuts
+// repeat-visit request volume close to zero, but a first-time visit to a
+// densely-connected object still needs real headroom here rather than
+// relying on caching alone. Still overridable per-deployment via
+// HATCHECK_RATE_READ_BURST / HATCHECK_RATE_READ_INTERVAL if 30 isn't enough.
+func NewRateLimiters(cfg Config) *RateLimiters {
 	return &RateLimiters{
-		Read:  NewRateLimitMiddleware(rate.Limit(3), 30),
-		Write: NewRateLimitMiddleware(rate.Every(5*time.Second), 4),
-		Admin: NewRateLimitMiddleware(rate.Every(30*time.Second), 2),
+		Read:  NewRateLimitMiddleware(cfg.RateReadTokens, cfg.RateReadBurst),
+		Write: NewRateLimitMiddleware(cfg.RateWriteTokens, cfg.RateWriteBurst),
+		Admin: NewRateLimitMiddleware(cfg.RateAdminTokens, cfg.RateAdminBurst),
 	}
 }
