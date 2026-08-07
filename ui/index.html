@@ -573,7 +573,7 @@
             display: none;
             flex: 1;
             flex-direction: column;
-            overflow: hidden;
+            overflow: auto;
         }
 
         .tab-panel.active {
@@ -822,13 +822,17 @@
             font-weight: 700;
         }
 
-        /* Fixed-aspect-ratio box (padding-bottom trick) so the treemap's
-           percentage-positioned tiles always have a stable coordinate space
-           to lay out against, regardless of panel width. */
+        /* Fills whatever vertical space is actually left in the flex-column
+           .tab-panel, rather than deriving height from a fraction of its own
+           width (the old padding-bottom aspect-ratio trick) — on a wide
+           panel that could produce a box taller than the viewport, and with
+           .tab-panel clipping overflow there was no way to scroll to the
+           rest of it. min-height keeps it usable if the window is short. */
         .map-treemap-wrap {
             position: relative;
             width: 100%;
-            padding-bottom: 60%;
+            flex: 1;
+            min-height: 320px;
         }
 
         .map-treemap {
@@ -853,8 +857,17 @@
 
         .map-tile:hover { filter: brightness(1.08); }
 
-        .map-tile.map-tile-out { border-left: 3px solid var(--relation); }
-        .map-tile.map-tile-in  { border-left: 3px solid var(--accent); }
+        /* Tinted fill (not just the border) so a correctly-sized tile is
+           actually visible against the page background — --surface alone
+           is only a few shades off --bg and reads as blank space. */
+        .map-tile.map-tile-out {
+            border-left: 3px solid var(--relation);
+            background: rgba(153, 102, 34, 0.10);
+        }
+        .map-tile.map-tile-in {
+            border-left: 3px solid var(--accent);
+            background: rgba(51, 119, 170, 0.10);
+        }
 
         .map-tile-rel {
             font-size: 9px;
