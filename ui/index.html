@@ -2124,6 +2124,35 @@ let mapMetric = 'fanout'; // 'fanout' | 'recency' | 'tags'
 let mapTiles  = [];       // cached per-neighbor data for the current center, so switching
                           // metrics re-renders instantly without re-fetching anything
 
+// Per-hash caches for object-meta (tags/created) and neighbor fan-out counts.
+// Safe to cache tags/created indefinitely — Hatcheck's CAS objects are
+// immutable, so a given hash's own metadata never changes after creation.
+// Fan-out is a derived display metric, not something that determines which
+// tiles exist, so a small staleness window there is an acceptable trade for
+// cutting Map's request volume: the old code fired 2 requests per neighbor
+// on every single click, all concurrently via Promise.all, which was enough
+// to blow through the Read rate-limit pool's burst by the very next click —
+// especially revisiting a center or a neighbor already seen this session.
+const objectMetaCache = {}; // hash -> { tags, created }
+const fanOutCache      = {}; // hash -> number
+
+async function getObjectMeta(hash) {
+    if (objectMetaCache[hash]) return objectMetaCache[hash];
+    const res = await apiFetch(`${API}/object-meta?hash=${hash}`);
+    const meta = res.ok ? await res.json() : { tags: [], created: null };
+    objectMetaCache[hash] = meta;
+    return meta;
+}
+
+async function getFanOut(hash) {
+    if (fanOutCache[hash] !== undefined) return fanOutCache[hash];
+    const res = await apiFetch(`${API}/relations?hash=${hash}`);
+    const rel = res.ok ? await res.json() : { outgoing: [], incoming: [] };
+    const fanOut = (rel.outgoing || []).length + (rel.incoming || []).length;
+    fanOutCache[hash] = fanOut;
+    return fanOut;
+}
+
 async function loadMapPanel(hash) {
     if (!hash) return;
 
@@ -2131,13 +2160,13 @@ async function loadMapPanel(hash) {
     const emptyEl    = document.getElementById('map-empty');
 
     try {
-        const [relRes, metaRes] = await Promise.all([
-            apiFetch(`${API}/relations?hash=${hash}`),
-            apiFetch(`${API}/object-meta?hash=${hash}`),
-        ]);
+        // The center's own relations always need a fresh fetch — this is
+        // what determines the tile set, and could have changed since any
+        // cached view (e.g. a new relation added elsewhere this session).
+        const relRes = await apiFetch(`${API}/relations?hash=${hash}`);
         if (!relRes.ok) throw new Error('Failed to load relations');
         const { outgoing, incoming } = await relRes.json();
-        const centerMeta = metaRes.ok ? await metaRes.json() : { tags: [] };
+        const centerMeta = await getObjectMeta(hash);
         const centerTags = centerMeta.tags || [];
 
         // Each relation is its own tile, even if two relations happen to
@@ -2156,21 +2185,19 @@ async function loadMapPanel(hash) {
         }
         emptyEl.style.display = 'none';
 
-        // Fetch each neighbor's own meta (tags/created/kind) and relation
-        // count (fan-out) in parallel — one round trip pair per neighbor,
-        // not per edge, since two edges can share a neighbor.
+        // One meta+fan-out lookup per unique neighbor, not per edge — and
+        // now short-circuited to zero network calls for any neighbor whose
+        // data is already cached from an earlier Map view this session.
         const neighborHashes = [...new Set(edges.map(e => e.neighborHash))];
         const neighborData = {};
         await Promise.all(neighborHashes.map(async (nh) => {
-            const [nMetaRes, nRelRes] = await Promise.all([
-                apiFetch(`${API}/object-meta?hash=${nh}`),
-                apiFetch(`${API}/relations?hash=${nh}`),
+            const [nMeta, fanOut] = await Promise.all([
+                getObjectMeta(nh),
+                getFanOut(nh),
             ]);
-            const nMeta = nMetaRes.ok ? await nMetaRes.json() : { tags: [], created: null };
-            const nRel  = nRelRes.ok ? await nRelRes.json() : { outgoing: [], incoming: [] };
             const overlap = (nMeta.tags || []).filter(t => centerTags.includes(t)).length;
             neighborData[nh] = {
-                fanOut: (nRel.outgoing || []).length + (nRel.incoming || []).length,
+                fanOut,
                 created: nMeta.created ? new Date(nMeta.created) : null,
                 tagOverlap: overlap,
             };
