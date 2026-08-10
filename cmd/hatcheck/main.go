@@ -1,7 +1,7 @@
 package main
 
 import (
-	"crypto/md5"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -36,11 +36,12 @@ Options:
 Run 'hatcheck <command> -help' for command-specific options.
 `
 
-// newStore creates a CAS store with the placeholder MD5 hash function.
-// Replace with the production hash function when the dev branch is merged.
+// newStore creates a CAS store using SHA-256, matching the hash function
+// server/main.go initialises the HTTP server's store with — the CLI and
+// server must agree on this, since they operate on the same object store.
 func newStore(objPath string) (*cas.Store, error) {
 	return cas.New(objPath, func(content string) string {
-		sum := md5.Sum([]byte(content))
+		sum := sha256.Sum256([]byte(content))
 		return hex.EncodeToString(sum[:])
 	})
 }

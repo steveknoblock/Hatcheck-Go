@@ -1,7 +1,7 @@
 package main
 
 import (
-	"crypto/md5"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -612,9 +612,9 @@ func revokeHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Stor
 func main() {
 	cfg := LoadConfig()
 
-	// Initialise the CAS with an MD5 hash function.
+	// Initialise the CAS with a SHA-256 hash function.
 	store, err := cas.New(cfg.ObjPath, func(content string) string {
-		sum := md5.Sum([]byte(content))
+		sum := sha256.Sum256([]byte(content))
 		return hex.EncodeToString(sum[:])
 	})
 	if err != nil {

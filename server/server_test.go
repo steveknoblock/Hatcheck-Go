@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"crypto/md5"
+	"crypto/sha256"
 	"encoding/hex"
 
 	"github.com/steveknoblock/hatcheck-go/internal/cas"
@@ -51,7 +51,7 @@ func newTestEnv(t *testing.T) (store *cas.Store, objPath, metaPath string, meta 
 	metaPath = filepath.Join(dir, "metadata")
 
 	store, err = cas.New(objPath, func(content string) string {
-		sum := md5.Sum([]byte(content))
+		sum := sha256.Sum256([]byte(content))
 		return hex.EncodeToString(sum[:])
 	})
 	if err != nil {
@@ -102,7 +102,7 @@ func stashOne(t *testing.T, store *cas.Store, meta *metadata.Store, content stri
 	t.Helper()
 
 	// Compute the hash the same way the store will so we can build a matching VR.
-	sum := md5.Sum([]byte(content))
+	sum := sha256.Sum256([]byte(content))
 	hash := hex.EncodeToString(sum[:])
 	vr := VerifiedRequest{
 		Capability: metadata.CapabilityPayload{Hash: hash},
@@ -142,7 +142,7 @@ func TestStashHandler_Success(t *testing.T) {
 	store, _, _, meta := newTestEnv(t)
 
 	content := "hello #world"
-	sum := md5.Sum([]byte(content))
+	sum := sha256.Sum256([]byte(content))
 	wantHash := hex.EncodeToString(sum[:])
 
 	req := httptest.NewRequest(http.MethodPost, "/stash", strings.NewReader(content))
@@ -192,7 +192,7 @@ func TestStashHandler_CapabilityIrrelevant(t *testing.T) {
 	store, _, _, meta := newTestEnv(t)
 
 	content := "hello #world"
-	sum := md5.Sum([]byte(content))
+	sum := sha256.Sum256([]byte(content))
 	wantHash := hex.EncodeToString(sum[:])
 
 	// vr carries a capability for an unrelated hash — stash must still succeed.
@@ -568,8 +568,8 @@ func TestCollectionHandler_Success(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatalf("failed to unmarshal response %q: %v", w.Body.String(), err)
 	}
-	if len(result.Hash) != 32 {
-		t.Errorf("expected 32-char hash, got %q", result.Hash)
+	if len(result.Hash) != 64 {
+		t.Errorf("expected 64-char hash, got %q", result.Hash)
 	}
 	if result.Capability.Hash != result.Hash {
 		t.Errorf("expected capability to cover %q, got %q", result.Hash, result.Capability.Hash)
@@ -608,8 +608,8 @@ func TestRelationHandler_Success(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
 		t.Fatalf("failed to unmarshal response %q: %v", w.Body.String(), err)
 	}
-	if len(result.Hash) != 32 {
-		t.Errorf("expected 32-char hash, got %q", result.Hash)
+	if len(result.Hash) != 64 {
+		t.Errorf("expected 64-char hash, got %q", result.Hash)
 	}
 }
 

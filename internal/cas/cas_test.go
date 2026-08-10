@@ -1,13 +1,13 @@
 package cas
 
 import (
-	"crypto/md5"
+	"crypto/sha256"
 	"encoding/hex"
 	"os"
 	"testing"
 )
 
-// testStore creates a CAS Store with an MD5 hash function and a temp directory.
+// testStore creates a CAS Store with a SHA-256 hash function and a temp directory.
 // The caller is responsible for removing the directory via the returned cleanup func.
 func testStore(t *testing.T) (*Store, func()) {
 	t.Helper()
@@ -16,7 +16,7 @@ func testStore(t *testing.T) (*Store, func()) {
 		t.Fatal(err)
 	}
 	store, err := New(objPath, func(content string) string {
-		sum := md5.Sum([]byte(content))
+		sum := sha256.Sum256([]byte(content))
 		return hex.EncodeToString(sum[:])
 	})
 	if err != nil {
@@ -56,8 +56,8 @@ func TestStash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stash failed: %v", err)
 	}
-	if len(hash) != 32 {
-		t.Errorf("expected 32 char hash, got %d", len(hash))
+	if len(hash) != 64 {
+		t.Errorf("expected 64 char hash, got %d", len(hash))
 	}
 }
 
