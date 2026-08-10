@@ -20,13 +20,14 @@ Usage:
   hatcheck <command> [options]
 
 Commands:
-  stash       Store content in the CAS
-  fetch       Retrieve content by hash
-  list        List all objects in the store
-  query       Query objects by index and key
-  export      Export objects and metadata to a shareable archive
-  import      Import objects and metadata from an archive
-  capability  Manage capabilities (issue, revoke, list)
+  stash            Store content in the CAS
+  fetch            Retrieve content by hash
+  list             List all objects in the store
+  query            Query objects by index and key
+  export           Export objects and metadata to a shareable archive
+  export-markdown  Export a namespace as a directory of markdown files
+  import           Import objects and metadata from an archive
+  capability       Manage capabilities (issue, revoke, list)
 
 Options:
   -data     Path to objects directory (default: ./objects)
@@ -70,6 +71,8 @@ func main() {
 		runQuery(os.Args[2:], metaPath)
 	case "export":
 		runExport(os.Args[2:], objPath, metaPath)
+	case "export-markdown":
+		runExportMarkdown(os.Args[2:], objPath, metaPath)
 	case "import":
 		runImport(os.Args[2:], objPath, metaPath)
 	case "capability":
@@ -310,6 +313,43 @@ func runExport(args []string, objPath, metaPath string) {
 		outPath = *source + ".tar.gz"
 	}
 	fmt.Printf("exported to %s\n", outPath)
+}
+
+// --- export-markdown ---
+
+func runExportMarkdown(args []string, objPath, metaPath string) {
+	fs := flag.NewFlagSet("export-markdown", flag.ExitOnError)
+	namespace := fs.String("namespace", "", "Namespace to export (required)")
+	outDir := fs.String("o", "", "Output directory (default: ./<namespace>)")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: hatcheck export-markdown -namespace <namespace> [-o <dir>]")
+		fmt.Fprintln(os.Stderr, "Renders every name in the namespace as markdown: a leaf becomes a")
+		fmt.Fprintln(os.Stderr, "<slug>.md file, a Collection becomes a <slug>/ directory with an")
+		fmt.Fprintln(os.Stderr, "_index.md — suitable as a Hugo content directory.")
+		fmt.Fprintln(os.Stderr, "Examples:")
+		fmt.Fprintln(os.Stderr, "  hatcheck export-markdown -namespace bob")
+		fmt.Fprintln(os.Stderr, "  hatcheck export-markdown -namespace bob -o ./content")
+		fs.PrintDefaults()
+	}
+	fs.Parse(args)
+
+	if *namespace == "" {
+		fmt.Fprintln(os.Stderr, "error: -namespace is required")
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	dest := *outDir
+	if dest == "" {
+		dest = "./" + *namespace
+	}
+
+	if err := share.ExportMarkdown(objPath, metaPath, *namespace, dest); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("exported to %s\n", dest)
 }
 
 // --- import ---
