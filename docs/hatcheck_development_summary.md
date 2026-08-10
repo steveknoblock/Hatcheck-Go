@@ -214,5 +214,4 @@ The Name label stays stable. All intermediate versions preserved in CAS.
 - **Document identity** — `prev` field linking versions of the same document (deferred, needs a design conversation).
 - **Headless/API-key access mode** — programmatic CAS access via a static API key, no content-editing UI. Not yet designed.
 - **"Context" primitive** — like a Collection but with a fixed item count, own dedicated interface. `feature-context` branch exists, no commits yet.
-- **Markdown export** — leaf and document export to `.md` files, Hugo static site generator support. Not started.
 - **Dead code** — check `cas.go` for leftover debug `fmt.Printf` statements from the original single-user version.
