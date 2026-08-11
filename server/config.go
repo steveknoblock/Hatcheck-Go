@@ -27,7 +27,7 @@ type Config struct {
 	CapabilityExpiry time.Duration // HATCHECK_CAPABILITY_EXPIRY (default: 8760h)
 
 	RateReadTokens  rate.Limit // HATCHECK_RATE_READ_INTERVAL (default: 1s)
-	RateReadBurst   int        // HATCHECK_RATE_READ_BURST    (default: 10)
+	RateReadBurst   int        // HATCHECK_RATE_READ_BURST    (default: 30)
 	RateWriteTokens rate.Limit // HATCHECK_RATE_WRITE_INTERVAL (default: 5s)
 	RateWriteBurst  int        // HATCHECK_RATE_WRITE_BURST   (default: 4)
 	RateAdminTokens rate.Limit // HATCHECK_RATE_ADMIN_INTERVAL (default: 1s)
@@ -50,8 +50,10 @@ func LoadConfig() Config {
 		// Operational defaults.
 		CapabilityExpiry: envDuration("HATCHECK_CAPABILITY_EXPIRY", 365*24*time.Hour),
 
-		RateReadTokens:  rate.Every(envDuration("HATCHECK_RATE_READ_INTERVAL", time.Second)),
-		RateReadBurst:   envInt("HATCHECK_RATE_READ_BURST", 10),
+		// Read burst raised from 10 to 30 — see NewRateLimiters in
+		// ratelimit.go for why (Map tab's per-neighbor request fan-out).
+		RateReadTokens: rate.Every(envDuration("HATCHECK_RATE_READ_INTERVAL", time.Second)),
+		RateReadBurst:  envInt("HATCHECK_RATE_READ_BURST", 30),
 		RateWriteTokens: rate.Every(envDuration("HATCHECK_RATE_WRITE_INTERVAL", 5*time.Second)),
 		RateWriteBurst:  envInt("HATCHECK_RATE_WRITE_BURST", 4),
 		RateAdminTokens: rate.Every(envDuration("HATCHECK_RATE_ADMIN_INTERVAL", time.Second)),

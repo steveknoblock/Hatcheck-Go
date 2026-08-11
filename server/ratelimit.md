@@ -40,11 +40,11 @@ type RateLimiters struct {
 }
 ```
 
-Groups three pools matching the cost profile of the API routes. Constructed once in `main()` via `NewRateLimiters()` and passed to `registerRoutes()`.
+Groups three pools matching the cost profile of the API routes. Constructed once in `main()` via `NewRateLimiters(cfg)`, where `cfg` is the `Config` loaded by `LoadConfig()` (see `config.go`), and passed to `registerRoutes()`.
 
 | Pool    | Routes                                                             |
 |---------|--------------------------------------------------------------------|
-| `Read`  | `/fetch`, `/list`, `/query`, `/namespaces`, `/names`, `/relations`, `/tags` |
+| `Read`  | `/fetch`, `/list`, `/query`, `/namespaces`, `/names`, `/relations`, `/tags`, `/object-meta` |
 | `Write` | `/stash`, `/collection`, `/relation`, `/name`                      |
 | `Admin` | `/export`, `/import`, `/capability`, `/capability/revoke`          |
 
@@ -63,18 +63,18 @@ Constructs a single pool with the given steady-state rate and burst size.
 ### `NewRateLimiters`
 
 ```go
-func NewRateLimiters() *RateLimiters
+func NewRateLimiters(cfg Config) *RateLimiters
 ```
 
-Constructs all three pools with starting limits tuned to the cost profile of each route group:
+Constructs all three pools from `cfg`, which resolves each pool's rate and burst from its `HATCHECK_RATE_*` environment variable (see `config.go`), falling back to these defaults if unset:
 
-| Pool    | Sustained rate          | Burst |
-|---------|-------------------------|-------|
-| `Read`  | 1 request/second        | 10    |
-| `Write` | 1 request/5 seconds     | 4     |
-| `Admin` | 1 request/30 seconds    | 2     |
+| Pool    | Env vars                                              | Default sustained rate | Default burst |
+|---------|--------------------------------------------------------|-------------------------|----------------|
+| `Read`  | `HATCHECK_RATE_READ_INTERVAL` / `HATCHECK_RATE_READ_BURST`   | 1 request/second        | 30             |
+| `Write` | `HATCHECK_RATE_WRITE_INTERVAL` / `HATCHECK_RATE_WRITE_BURST` | 1 request/5 seconds     | 4              |
+| `Admin` | `HATCHECK_RATE_ADMIN_INTERVAL` / `HATCHECK_RATE_ADMIN_BURST` | 1 request/second        | 20             |
 
-These are starting values and should be adjusted based on observed usage.
+The Read default burst was raised from 10 to 30 after the Map tab's relations treemap started tripping 429s on the second click — `loadMapPanel` (in `ui/index.html`) fires up to `2 × (1 + neighbor count)` GET requests concurrently for every navigation. A UI-side fix caches object-meta and neighbor fan-out per hash to cut repeat-visit request volume, but a first-time visit to a densely-connected object still needs real headroom from this pool. Still overridable per-deployment via the env vars above.
 
 ---
 

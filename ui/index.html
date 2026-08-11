@@ -573,7 +573,7 @@
             display: none;
             flex: 1;
             flex-direction: column;
-            overflow: hidden;
+            overflow: auto;
         }
 
         .tab-panel.active {
@@ -822,13 +822,17 @@
             font-weight: 700;
         }
 
-        /* Fixed-aspect-ratio box (padding-bottom trick) so the treemap's
-           percentage-positioned tiles always have a stable coordinate space
-           to lay out against, regardless of panel width. */
+        /* Fills whatever vertical space is actually left in the flex-column
+           .tab-panel, rather than deriving height from a fraction of its own
+           width (the old padding-bottom aspect-ratio trick) — on a wide
+           panel that could produce a box taller than the viewport, and with
+           .tab-panel clipping overflow there was no way to scroll to the
+           rest of it. min-height keeps it usable if the window is short. */
         .map-treemap-wrap {
             position: relative;
             width: 100%;
-            padding-bottom: 60%;
+            flex: 1;
+            min-height: 320px;
         }
 
         .map-treemap {
@@ -853,8 +857,17 @@
 
         .map-tile:hover { filter: brightness(1.08); }
 
-        .map-tile.map-tile-out { border-left: 3px solid var(--relation); }
-        .map-tile.map-tile-in  { border-left: 3px solid var(--accent); }
+        /* Tinted fill (not just the border) so a correctly-sized tile is
+           actually visible against the page background — --surface alone
+           is only a few shades off --bg and reads as blank space. */
+        .map-tile.map-tile-out {
+            border-left: 3px solid var(--relation);
+            background: rgba(153, 102, 34, 0.10);
+        }
+        .map-tile.map-tile-in {
+            border-left: 3px solid var(--accent);
+            background: rgba(51, 119, 170, 0.10);
+        }
 
         .map-tile-rel {
             font-size: 9px;
@@ -2110,6 +2123,35 @@ let mapMetric = 'fanout'; // 'fanout' | 'recency' | 'tags'
 let mapTiles  = [];       // cached per-neighbor data for the current center, so switching
                           // metrics re-renders instantly without re-fetching anything
 
+// Per-hash caches for object-meta (tags/created) and neighbor fan-out counts.
+// Safe to cache tags/created indefinitely — Hatcheck's CAS objects are
+// immutable, so a given hash's own metadata never changes after creation.
+// Fan-out is a derived display metric, not something that determines which
+// tiles exist, so a small staleness window there is an acceptable trade for
+// cutting Map's request volume: the old code fired 2 requests per neighbor
+// on every single click, all concurrently via Promise.all, which was enough
+// to blow through the Read rate-limit pool's burst by the very next click —
+// especially revisiting a center or a neighbor already seen this session.
+const objectMetaCache = {}; // hash -> { tags, created }
+const fanOutCache      = {}; // hash -> number
+
+async function getObjectMeta(hash) {
+    if (objectMetaCache[hash]) return objectMetaCache[hash];
+    const res = await apiFetch(`${API}/object-meta?hash=${hash}`);
+    const meta = res.ok ? await res.json() : { tags: [], created: null };
+    objectMetaCache[hash] = meta;
+    return meta;
+}
+
+async function getFanOut(hash) {
+    if (fanOutCache[hash] !== undefined) return fanOutCache[hash];
+    const res = await apiFetch(`${API}/relations?hash=${hash}`);
+    const rel = res.ok ? await res.json() : { outgoing: [], incoming: [] };
+    const fanOut = (rel.outgoing || []).length + (rel.incoming || []).length;
+    fanOutCache[hash] = fanOut;
+    return fanOut;
+}
+
 async function loadMapPanel(hash) {
     if (!hash) return;
 
@@ -2117,13 +2159,13 @@ async function loadMapPanel(hash) {
     const emptyEl    = document.getElementById('map-empty');
 
     try {
-        const [relRes, metaRes] = await Promise.all([
-            apiFetch(`${API}/relations?hash=${hash}`),
-            apiFetch(`${API}/object-meta?hash=${hash}`),
-        ]);
+        // The center's own relations always need a fresh fetch — this is
+        // what determines the tile set, and could have changed since any
+        // cached view (e.g. a new relation added elsewhere this session).
+        const relRes = await apiFetch(`${API}/relations?hash=${hash}`);
         if (!relRes.ok) throw new Error('Failed to load relations');
         const { outgoing, incoming } = await relRes.json();
-        const centerMeta = metaRes.ok ? await metaRes.json() : { tags: [] };
+        const centerMeta = await getObjectMeta(hash);
         const centerTags = centerMeta.tags || [];
 
         // Each relation is its own tile, even if two relations happen to
@@ -2142,21 +2184,19 @@ async function loadMapPanel(hash) {
         }
         emptyEl.style.display = 'none';
 
-        // Fetch each neighbor's own meta (tags/created/kind) and relation
-        // count (fan-out) in parallel — one round trip pair per neighbor,
-        // not per edge, since two edges can share a neighbor.
+        // One meta+fan-out lookup per unique neighbor, not per edge — and
+        // now short-circuited to zero network calls for any neighbor whose
+        // data is already cached from an earlier Map view this session.
         const neighborHashes = [...new Set(edges.map(e => e.neighborHash))];
         const neighborData = {};
         await Promise.all(neighborHashes.map(async (nh) => {
-            const [nMetaRes, nRelRes] = await Promise.all([
-                apiFetch(`${API}/object-meta?hash=${nh}`),
-                apiFetch(`${API}/relations?hash=${nh}`),
+            const [nMeta, fanOut] = await Promise.all([
+                getObjectMeta(nh),
+                getFanOut(nh),
             ]);
-            const nMeta = nMetaRes.ok ? await nMetaRes.json() : { tags: [], created: null };
-            const nRel  = nRelRes.ok ? await nRelRes.json() : { outgoing: [], incoming: [] };
             const overlap = (nMeta.tags || []).filter(t => centerTags.includes(t)).length;
             neighborData[nh] = {
-                fanOut: (nRel.outgoing || []).length + (nRel.incoming || []).length,
+                fanOut,
                 created: nMeta.created ? new Date(nMeta.created) : null,
                 tagOverlap: overlap,
             };

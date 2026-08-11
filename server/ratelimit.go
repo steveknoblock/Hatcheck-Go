@@ -5,6 +5,7 @@ import (
 	"math"
 	"net/http"
 	"sync"
+
 	"golang.org/x/time/rate"
 )
 
@@ -91,13 +92,28 @@ func (rl *RateLimitMiddleware) Limit(
 
 // RateLimiters holds three pools matching the cost profile of the API routes.
 type RateLimiters struct {
-	Read  *RateLimitMiddleware // /fetch, /list, /query, /namespaces, /names, /relations, /tags
+	Read  *RateLimitMiddleware // /fetch, /list, /query, /namespaces, /names, /relations, /tags, /object-meta
 	Write *RateLimitMiddleware // /stash, /collection, /relation, /name
 	Admin *RateLimitMiddleware // /export, /import, /capability, /capability/revoke
 }
 
-// NewRateLimiters constructs the three pools from the provided Config.
-// Call once from main() after LoadConfig().
+// NewRateLimiters constructs all three pools from Config, which resolves
+// each pool's steady-state rate and burst from its HATCHECK_RATE_* env var
+// (see config.go), falling back to the defaults documented there. Call once
+// from main().
+//
+// The Read default burst was raised from 10 to 30 (config.go) after the Map
+// tab's treemap started tripping 429s on the second click: loadMapPanel
+// fires up to 2 × (1 + neighbor count) GET requests concurrently via
+// Promise.all for every navigation (relations + object-meta for the center,
+// plus the same pair per unique neighbor). A node with even a handful of
+// relations could burn through a burst of 10 in one click, leaving no
+// headroom to immediately click again. The UI-side fix (caching object-meta
+// and neighbor fan-out per hash, see loadMapPanel in ui/index.html) cuts
+// repeat-visit request volume close to zero, but a first-time visit to a
+// densely-connected object still needs real headroom here rather than
+// relying on caching alone. Still overridable per-deployment via
+// HATCHECK_RATE_READ_BURST / HATCHECK_RATE_READ_INTERVAL if 30 isn't enough.
 func NewRateLimiters(cfg Config) *RateLimiters {
 	return &RateLimiters{
 		Read:  NewRateLimitMiddleware(cfg.RateReadTokens, cfg.RateReadBurst),

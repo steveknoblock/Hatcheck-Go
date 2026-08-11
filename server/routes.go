@@ -66,6 +66,9 @@ func registerRoutes(
 	http.HandleFunc("/tags", Adapt(am.RequireAuth(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		tagsHandler(w, req, meta, vr)
 	})))))
+	http.HandleFunc("/object-meta", Adapt(am.RequireAuth(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+		objectMetaHandler(w, req, meta, vr)
+	})))))
 	http.HandleFunc("/dates", Adapt(am.RequireAuth(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		datesHandler(w, req, meta, vr)
 	})))))
