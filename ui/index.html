@@ -1154,6 +1154,7 @@
         <div class="tab-strip" id="tab-strip">
             <button class="tab-btn active" id="tab-editor-btn" onclick="switchTab('editor')">Editor</button>
             <button class="tab-btn tab-relation" id="tab-relation-btn" onclick="switchTab('relations')" disabled>Relations<span class="tab-badge" id="rel-tab-badge" style="display:none"></span></button>
+            <button class="tab-btn tab-map" id="tab-map-btn" onclick="switchTab('map')" disabled>Map</button>
             <div class="tab-strip-hash">
                 <span id="current-hash">—</span>
             </div>
@@ -1404,11 +1405,11 @@ async function sendMagicLink() {
 // as query parameters after authenticating the Stytch token.
 async function handleMagicLinkCallback() {
     const params = new URLSearchParams(window.location.search);
-    console.log('callback params:', window.location.search);  // add this
-    const jwt     = params.get('session_jwt');
-    const uid     = params.get('user_id');
-    const email   = params.get('email');
-    const readCap = params.get('read_cap');
+    const jwt       = params.get('session_jwt');
+    const uid       = params.get('user_id');
+    const email     = params.get('email');
+    const readCap   = params.get('read_cap');
+    const defaultNs = params.get('default_ns');
     if (!jwt) return;
 
     // Clean the parameters from the URL without a page reload.
@@ -1426,6 +1427,16 @@ async function handleMagicLinkCallback() {
         sessionStorage.setItem('browse_cap_token', browseCapToken);
     }
 
+    // Apply the server's suggested default namespace (see defaultNamespace
+    // in server/auth_handlers.go) as the starting namespace, but only if
+    // we don't already have one active — a fresh login shouldn't clobber
+    // a namespace the user was already mid-session on (e.g. a page reload
+    // that happens to still carry stale callback params).
+    if (defaultNs && !namespace) {
+        namespace = defaultNs;
+        sessionStorage.setItem('namespace', namespace);
+    }
+
     updateAuthUI();
     showToast('Signed in', email || uid);
 }
@@ -1434,7 +1445,13 @@ async function handleMagicLinkCallback() {
 // elements it references don't exist yet when the script first executes.
 document.addEventListener('DOMContentLoaded', () => {
     handleMagicLinkCallback().then(updateAuthUI);
-    if (namespace) document.getElementById('ns-input').value = namespace;
+    // handleMagicLinkCallback is async but has no awaits in its body, so
+    // by the time the call above returns, sessionJWT/browseCapToken/
+    // namespace are already updated synchronously — safe to read here.
+    if (namespace) {
+        document.getElementById('ns-input').value = namespace;
+        loadNamespace();
+    }
     renderRecentNamespaces();
 
     // Chrome remembers values typed into this field across page loads and
