@@ -1,6 +1,8 @@
 package metadata
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"testing"
 	"time"
@@ -385,5 +387,109 @@ func TestTagsForHash_IgnoresNonStashEntries(t *testing.T) {
 	tags := store.TagsForHash("hash1")
 	if len(tags) != 1 || tags[0] != "ideas" {
 		t.Errorf("expected [ideas], got %v", tags)
+	}
+}
+
+// --- NDJSON persistence ---
+
+func TestStore_MigratesLegacyArrayFormatOnLoad(t *testing.T) {
+	dir, err := os.MkdirTemp("", "hatcheck-meta-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+
+	legacy := `[
+  {"op":"stash","created":"2024-01-01T00:00:00Z","payload":{"hash":"aaa","size":3,"content":"x"}},
+  {"op":"stash","created":"2024-01-02T00:00:00Z","payload":{"hash":"bbb","size":3,"content":"y"}}
+]`
+	if err := os.WriteFile(dir+"/log.json", []byte(legacy), 0644); err != nil {
+		t.Fatalf("failed to seed legacy log: %v", err)
+	}
+
+	store, err := New(dir, &TagIndex{}, &DateIndex{}, &NameIndex{}, &RelationIndex{})
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	if len(store.Log) != 2 {
+		t.Fatalf("expected 2 entries loaded from legacy format, got %d", len(store.Log))
+	}
+
+	// The original should be preserved for inspection...
+	if _, err := os.Stat(dir + "/log.json.pre-ndjson.bak"); err != nil {
+		t.Errorf("expected pre-migration backup to exist: %v", err)
+	}
+
+	// ...and the live file should now be one compact JSON object per line.
+	migrated, err := os.ReadFile(dir + "/log.json")
+	if err != nil {
+		t.Fatalf("failed to read migrated log: %v", err)
+	}
+	lines := bytes.Split(bytes.TrimRight(migrated, "\n"), []byte("\n"))
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 NDJSON lines after migration, got %d", len(lines))
+	}
+	for i, line := range lines {
+		var entry Entry
+		if err := json.Unmarshal(line, &entry); err != nil {
+			t.Errorf("migrated line %d is not valid standalone JSON: %v", i, err)
+		}
+	}
+
+	// A subsequent append should be a real append, not another rewrite —
+	// confirmed indirectly by re-loading and checking the entry landed.
+	store.AppendStash("ccc", 3, "z")
+	store2, err := New(dir, &TagIndex{}, &DateIndex{}, &NameIndex{}, &RelationIndex{})
+	if err != nil {
+		t.Fatalf("New() reload error: %v", err)
+	}
+	if len(store2.Log) != 3 {
+		t.Fatalf("expected 3 entries after append + reload, got %d", len(store2.Log))
+	}
+}
+
+func TestStore_DropsUnparsableTrailingLine(t *testing.T) {
+	dir, err := os.MkdirTemp("", "hatcheck-meta-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+
+	// A well-formed entry followed by a truncated one, as if the process
+	// died mid-write of the second line.
+	good := `{"op":"stash","created":"2024-01-01T00:00:00Z","payload":{"hash":"aaa","size":3,"content":"x"}}`
+	truncated := `{"op":"stash","created":"2024-01-02T00:00:00Z","payl`
+	content := good + "\n" + truncated
+	if err := os.WriteFile(dir+"/log.json", []byte(content), 0644); err != nil {
+		t.Fatalf("failed to seed log: %v", err)
+	}
+
+	store, err := New(dir, &TagIndex{}, &DateIndex{}, &NameIndex{}, &RelationIndex{})
+	if err != nil {
+		t.Fatalf("New() should not fail on a truncated trailing line, got: %v", err)
+	}
+	if len(store.Log) != 1 {
+		t.Fatalf("expected the good entry to load and the truncated one to be dropped, got %d entries", len(store.Log))
+	}
+}
+
+func TestStore_CorruptMiddleLineFailsToLoad(t *testing.T) {
+	dir, err := os.MkdirTemp("", "hatcheck-meta-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+
+	// Corruption in the middle of the file (not the last line) is real
+	// data loss risk, not an interrupted write — it should fail loudly
+	// rather than be silently dropped.
+	corruptMiddle := `{"op":"stash","created":"2024-01-01T00:00:00Z","payl
+{"op":"stash","created":"2024-01-02T00:00:00Z","payload":{"hash":"bbb","size":3,"content":"y"}}`
+	if err := os.WriteFile(dir+"/log.json", []byte(corruptMiddle), 0644); err != nil {
+		t.Fatalf("failed to seed log: %v", err)
+	}
+
+	if _, err := New(dir, &TagIndex{}, &DateIndex{}, &NameIndex{}, &RelationIndex{}); err == nil {
+		t.Fatal("expected New() to fail on mid-file corruption, got nil error")
 	}
 }

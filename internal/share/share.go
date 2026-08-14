@@ -2,6 +2,7 @@ package share
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
@@ -513,6 +514,16 @@ func filterLog(entries []json.RawMessage, hashes map[string]bool, names []string
 
 // --- Log helpers ---
 
+// readLog reads the live store's on-disk log, which is NDJSON (one
+// compact JSON entry per line) — this package works directly off the raw
+// log independent of a running Store (see the note below on why it
+// doesn't just call into internal/metadata for this), so it needs its own
+// understanding of that format rather than importing metadata's.
+//
+// A store that has never been opened via metadata.Store.load() could
+// still be sitting in the older single-JSON-array format, so that shape
+// is also accepted here for safety — but nothing in this package ever
+// writes that format back out.
 func readLog(metaPath string) ([]json.RawMessage, error) {
 	logPath := filepath.Join(metaPath, "log.json")
 	data, err := os.ReadFile(logPath)
@@ -522,9 +533,25 @@ func readLog(metaPath string) ([]json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(data) == 0 {
+		return nil, nil
+	}
+
+	if trimmed := bytes.TrimLeft(data, " \t\r\n"); len(trimmed) > 0 && trimmed[0] == '[' {
+		var entries []json.RawMessage
+		if err := json.Unmarshal(data, &entries); err != nil {
+			return nil, err
+		}
+		return entries, nil
+	}
+
 	var entries []json.RawMessage
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil, err
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		line = bytes.TrimRight(line, "\r")
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		entries = append(entries, append([]byte(nil), line...))
 	}
 	return entries, nil
 }
@@ -572,7 +599,16 @@ func prefixNameLabels(entries []json.RawMessage, source string) ([]json.RawMessa
 	return result, nil
 }
 
-// mergeLog appends entries to the destination log file.
+// mergeLog appends entries to the destination log file as NDJSON lines —
+// a real append (O_APPEND), not a read-modify-rewrite of the whole file,
+// for the same reason Store.appendLine avoids it.
+//
+// If the destination log doesn't exist yet, it's created fresh. If it
+// exists but is still in the legacy single-JSON-array format (a store
+// that predates the NDJSON migration and has never been opened via
+// metadata.Store.load()), it's migrated to NDJSON first so the append
+// below lands on a consistent file rather than corrupting it by mixing
+// formats.
 func mergeLog(metaPath string, entries []json.RawMessage) error {
 	if err := os.MkdirAll(metaPath, 0755); err != nil {
 		return err
@@ -580,25 +616,53 @@ func mergeLog(metaPath string, entries []json.RawMessage) error {
 
 	logPath := filepath.Join(metaPath, "log.json")
 
-	var existing []json.RawMessage
-	data, err := os.ReadFile(logPath)
-	if err != nil && !os.IsNotExist(err) {
+	if data, err := os.ReadFile(logPath); err == nil {
+		if trimmed := bytes.TrimLeft(data, " \t\r\n"); len(trimmed) > 0 && trimmed[0] == '[' {
+			var existing []json.RawMessage
+			if err := json.Unmarshal(data, &existing); err != nil {
+				return fmt.Errorf("parsing legacy log for migration: %w", err)
+			}
+			var buf bytes.Buffer
+			for _, raw := range existing {
+				var compact bytes.Buffer
+				if err := json.Compact(&compact, raw); err != nil {
+					return fmt.Errorf("compacting entry during legacy migration: %w", err)
+				}
+				buf.Write(compact.Bytes())
+				buf.WriteByte('\n')
+			}
+			if err := os.WriteFile(logPath, buf.Bytes(), 0644); err != nil {
+				return fmt.Errorf("migrating legacy log before merge: %w", err)
+			}
+		}
+	} else if !os.IsNotExist(err) {
 		return err
 	}
-	if err == nil {
-		if err := json.Unmarshal(data, &existing); err != nil {
-			return err
-		}
-	}
 
-	merged := append(existing, entries...)
-
-	out, err := json.MarshalIndent(merged, "", "  ")
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
 	}
+	defer f.Close()
 
-	return os.WriteFile(logPath, out, 0644)
+	for _, raw := range entries {
+		// Entries sourced from an import archive may still be
+		// pretty-printed (Export writes the archive's log with
+		// MarshalIndent for readability), which would embed literal
+		// newlines and break the one-line-per-entry NDJSON invariant.
+		// Compact defensively regardless of source.
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, raw); err != nil {
+			return fmt.Errorf("compacting log entry for merge: %w", err)
+		}
+		if _, err := f.Write(compact.Bytes()); err != nil {
+			return err
+		}
+		if _, err := f.Write([]byte("\n")); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // --- Tar helpers ---

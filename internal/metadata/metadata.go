@@ -1,8 +1,11 @@
 package metadata
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -41,6 +44,11 @@ func New(metaPath string, indexes ...Index) (*Store, error) {
 	return s, nil
 }
 
+// load reads the log file at startup. The on-disk format is
+// newline-delimited JSON (NDJSON) — one compact JSON Entry per line — so
+// that individual writes can be true appends (os.O_APPEND) rather than
+// rewrites of the entire file. See migrateToNDJSON for the one-time
+// upgrade path from the older single-JSON-array format.
 func (s *Store) load() error {
 	data, err := os.ReadFile(s.logPath)
 	if os.IsNotExist(err) {
@@ -49,15 +57,104 @@ func (s *Store) load() error {
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(data, &s.Log)
+	if len(data) == 0 {
+		return nil
+	}
+
+	if trimmed := bytes.TrimLeft(data, " \t\r\n"); len(trimmed) > 0 && trimmed[0] == '[' {
+		// Legacy format: the whole log was one JSON array. Parse it as
+		// before, then migrate the file on disk to NDJSON so every
+		// subsequent write can be a real append.
+		if err := json.Unmarshal(data, &s.Log); err != nil {
+			return err
+		}
+		return s.migrateToNDJSON(data)
+	}
+
+	return s.loadNDJSON(data)
 }
 
-func (s *Store) save() error {
-	data, err := json.MarshalIndent(s.Log, "", "  ")
+// loadNDJSON parses one JSON Entry per line. A trailing line that fails to
+// parse is treated as an interrupted write (a crash mid-append) and is
+// dropped with a warning rather than failing to boot; a malformed line
+// anywhere else in the file is treated as real corruption and returned as
+// an error, since dropping it would silently lose a committed entry.
+func (s *Store) loadNDJSON(data []byte) error {
+	var lines [][]byte
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		line = bytes.TrimRight(line, "\r")
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		lines = append(lines, line)
+	}
+
+	s.Log = make([]Entry, 0, len(lines))
+	for i, line := range lines {
+		var entry Entry
+		if err := json.Unmarshal(line, &entry); err != nil {
+			if i == len(lines)-1 {
+				log.Printf("metadata: dropping unparsable trailing log line (likely an interrupted write): %v", err)
+				continue
+			}
+			return fmt.Errorf("corrupt log entry on line %d of %s: %w", i+1, s.logPath, err)
+		}
+		s.Log = append(s.Log, entry)
+	}
+	return nil
+}
+
+// migrateToNDJSON rewrites the log file from the legacy single-JSON-array
+// format to NDJSON. This is a one-time full rewrite (not a hot path — it
+// runs once per store, on the first boot after upgrading), so the cost
+// that motivated moving away from whole-file rewrites elsewhere doesn't
+// apply here. The original file is preserved alongside it so the
+// migration is inspectable and reversible if anything looks wrong.
+func (s *Store) migrateToNDJSON(original []byte) error {
+	backupPath := s.logPath + ".pre-ndjson.bak"
+	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+		if err := os.WriteFile(backupPath, original, 0644); err != nil {
+			return fmt.Errorf("backing up pre-migration log: %w", err)
+		}
+	}
+
+	var buf bytes.Buffer
+	for _, entry := range s.Log {
+		data, err := json.Marshal(entry)
+		if err != nil {
+			return fmt.Errorf("encoding entry during migration: %w", err)
+		}
+		buf.Write(data)
+		buf.WriteByte('\n')
+	}
+
+	if err := os.WriteFile(s.logPath, buf.Bytes(), 0644); err != nil {
+		return fmt.Errorf("writing migrated ndjson log: %w", err)
+	}
+
+	log.Printf("metadata: migrated %s from JSON-array format to NDJSON (%d entries); original preserved at %s",
+		s.logPath, len(s.Log), backupPath)
+	return nil
+}
+
+// appendLine writes a single entry to the log file as one NDJSON line,
+// using a true append (O_APPEND) rather than rewriting the file. Cost is
+// proportional to the size of the new entry, not the size of the log.
+func (s *Store) appendLine(entry Entry) error {
+	data, err := json.Marshal(entry)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.logPath, data, 0644)
+	data = append(data, '\n')
+
+	f, err := os.OpenFile(s.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = f.Write(data)
+	return err
 }
 
 func (s *Store) buildIndexes() {
@@ -69,10 +166,14 @@ func (s *Store) buildIndexes() {
 }
 
 func (s *Store) append(entry Entry) error {
-	s.Log = append(s.Log, entry)
-	if err := s.save(); err != nil {
+	// Write to disk first. If this fails, we return before touching
+	// in-memory state, so s.Log and the indexes never get ahead of what's
+	// actually durable on disk (the previous append-to-slice-then-save
+	// order could leave them ahead if save() failed).
+	if err := s.appendLine(entry); err != nil {
 		return err
 	}
+	s.Log = append(s.Log, entry)
 	for _, idx := range s.indexes {
 		idx.Add(entry)
 	}

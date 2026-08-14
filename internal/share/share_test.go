@@ -562,10 +562,13 @@ func TestImport_MergesIntoExistingLog(t *testing.T) {
 
 	Import(archivePath, dstObj, dstMeta)
 
-	// Destination log should now have two entries.
-	logData, _ := os.ReadFile(filepath.Join(dstMeta, "log.json"))
-	var entries []json.RawMessage
-	json.Unmarshal(logData, &entries)
+	// Destination log should now have two entries. The merged file is
+	// NDJSON (mergeLog's on-disk format), so read it back the same way
+	// readLog does rather than assuming the old whole-array shape.
+	entries, err := readLog(dstMeta)
+	if err != nil {
+		t.Fatalf("failed to read merged log: %v", err)
+	}
 	if len(entries) != 2 {
 		t.Errorf("expected 2 log entries after merge, got %d", len(entries))
 	}
