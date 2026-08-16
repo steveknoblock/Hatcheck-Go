@@ -390,6 +390,76 @@ func TestTagsForHash_IgnoresNonStashEntries(t *testing.T) {
 	}
 }
 
+// --- AppendBatch ---
+
+func TestAppendBatch_AddsAllEntriesTogether(t *testing.T) {
+	store := newTestStore(t)
+
+	relPayload1, _ := json.Marshal(RelationPayload{Hash: "rel1", From: "item1", Rel: "is-context-for", To: "subject1"})
+	relPayload2, _ := json.Marshal(RelationPayload{Hash: "rel2", From: "item2", Rel: "is-context-for", To: "subject1"})
+	colPayload, _ := json.Marshal(CollectionPayload{Hash: "ctx1", Hashes: []string{"rel1", "rel2"}})
+
+	entries := []Entry{
+		{Op: OpRelation, Created: time.Now().UTC(), Payload: relPayload1},
+		{Op: OpRelation, Created: time.Now().UTC(), Payload: relPayload2},
+		{Op: OpCollection, Created: time.Now().UTC(), Payload: colPayload},
+	}
+
+	if err := store.AppendBatch(entries); err != nil {
+		t.Fatalf("AppendBatch() error: %v", err)
+	}
+	if len(store.Log) != 3 {
+		t.Fatalf("expected 3 log entries in memory, got %d", len(store.Log))
+	}
+
+	// Reload from disk to confirm the whole batch was actually persisted,
+	// not just held in memory.
+	reloaded, err := New(store.logPath[:len(store.logPath)-len("/log.json")], &TagIndex{}, &DateIndex{}, &NameIndex{}, &RelationIndex{})
+	if err != nil {
+		t.Fatalf("reload error: %v", err)
+	}
+	if len(reloaded.Log) != 3 {
+		t.Fatalf("expected 3 entries after reload, got %d", len(reloaded.Log))
+	}
+	if reloaded.Log[2].Op != OpCollection {
+		t.Errorf("expected last entry to be the collection, got %q", reloaded.Log[2].Op)
+	}
+}
+
+func TestAppendBatch_EmptyIsNoOp(t *testing.T) {
+	store := newTestStore(t)
+
+	if err := store.AppendBatch(nil); err != nil {
+		t.Fatalf("AppendBatch(nil) error: %v", err)
+	}
+	if len(store.Log) != 0 {
+		t.Fatalf("expected no entries, got %d", len(store.Log))
+	}
+}
+
+func TestAppendBatch_UpdatesIndexes(t *testing.T) {
+	store := newTestStore(t)
+
+	relPayload, _ := json.Marshal(RelationPayload{Hash: "rel1", From: "item1", Rel: "is-context-for", To: "subject1"})
+	colPayload, _ := json.Marshal(CollectionPayload{Hash: "ctx1", Hashes: []string{"rel1"}})
+
+	entries := []Entry{
+		{Op: OpRelation, Created: time.Now().UTC(), Payload: relPayload},
+		{Op: OpCollection, Created: time.Now().UTC(), Payload: colPayload},
+	}
+	if err := store.AppendBatch(entries); err != nil {
+		t.Fatalf("AppendBatch() error: %v", err)
+	}
+
+	// RelationIndex should see the batched relation without a separate
+	// AppendRelation call — confirms indexes are updated for every entry
+	// in the batch, not just the last one.
+	results := store.Query("relation", "to:subject1")
+	if len(results) != 1 {
+		t.Fatalf("expected 1 relation indexed for to:subject1, got %d", len(results))
+	}
+}
+
 // --- NDJSON persistence ---
 
 func TestStore_MigratesLegacyArrayFormatOnLoad(t *testing.T) {

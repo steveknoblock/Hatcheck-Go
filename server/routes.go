@@ -60,6 +60,9 @@ func registerRoutes(
 	http.HandleFunc("/relation", Adapt(am.RequireAuth(rl.Write.Limit(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		relationHandler(w, req, store, meta, cm.Key, cfg, vr)
 	}))))
+	http.HandleFunc("/context", Adapt(am.RequireAuth(rl.Write.Limit(func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
+		contextHandler(w, req, store, meta, cm.Key, cfg, vr)
+	}))))
 	http.HandleFunc("/relations", Adapt(am.RequireAuth(rl.Read.Limit(cm.Protect(PermRead, func(w http.ResponseWriter, req *http.Request, vr VerifiedRequest) {
 		relationsHandler(w, req, meta, vr)
 	})))))

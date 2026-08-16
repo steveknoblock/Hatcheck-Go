@@ -137,15 +137,23 @@ func (s *Store) migrateToNDJSON(original []byte) error {
 	return nil
 }
 
-// appendLine writes a single entry to the log file as one NDJSON line,
-// using a true append (O_APPEND) rather than rewriting the file. Cost is
-// proportional to the size of the new entry, not the size of the log.
-func (s *Store) appendLine(entry Entry) error {
-	data, err := json.Marshal(entry)
-	if err != nil {
-		return err
+// appendBatchLines writes one or more entries to the log file as NDJSON
+// lines using a single Write() call. A single Write() either fully
+// succeeds or fails — the OS doesn't partially commit one write() syscall
+// — so this is what makes a multi-entry append atomic at the syscall
+// level, the same way a single-entry append already was. Cost is
+// proportional to the size of the entries being written, not the size of
+// the log.
+func (s *Store) appendBatchLines(entries []Entry) error {
+	var buf bytes.Buffer
+	for _, entry := range entries {
+		data, err := json.Marshal(entry)
+		if err != nil {
+			return err
+		}
+		buf.Write(data)
+		buf.WriteByte('\n')
 	}
-	data = append(data, '\n')
 
 	f, err := os.OpenFile(s.logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -153,7 +161,7 @@ func (s *Store) appendLine(entry Entry) error {
 	}
 	defer f.Close()
 
-	_, err = f.Write(data)
+	_, err = f.Write(buf.Bytes())
 	return err
 }
 
@@ -165,19 +173,50 @@ func (s *Store) buildIndexes() {
 	}
 }
 
-func (s *Store) append(entry Entry) error {
+// appendUnlocked writes entries to disk as one batch, then updates
+// in-memory state to match. Callers must already hold s.mu — it exists so
+// both append() (single entry, called by the existing AppendX methods,
+// which already hold the lock) and AppendBatch (multiple entries, takes
+// the lock itself) share one code path rather than diverging.
+func (s *Store) appendUnlocked(entries []Entry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+
 	// Write to disk first. If this fails, we return before touching
 	// in-memory state, so s.Log and the indexes never get ahead of what's
 	// actually durable on disk (the previous append-to-slice-then-save
 	// order could leave them ahead if save() failed).
-	if err := s.appendLine(entry); err != nil {
+	if err := s.appendBatchLines(entries); err != nil {
 		return err
 	}
-	s.Log = append(s.Log, entry)
-	for _, idx := range s.indexes {
-		idx.Add(entry)
+	s.Log = append(s.Log, entries...)
+	for _, entry := range entries {
+		for _, idx := range s.indexes {
+			idx.Add(entry)
+		}
 	}
 	return nil
+}
+
+func (s *Store) append(entry Entry) error {
+	return s.appendUnlocked([]Entry{entry})
+}
+
+// AppendBatch appends multiple entries as a single atomic unit: either all
+// of them land — on disk and in memory — or none do. This is what lets
+// callers build multi-entry structures (e.g. a Context: several
+// is-context-for relations plus the Collection that wraps them) without a
+// caller-visible window where only some of the entries exist.
+//
+// The lock is held for the whole batch, so no other write can interleave
+// with it, and the single underlying Write() call inside appendBatchLines
+// means a partial write can't happen at the syscall level either.
+func (s *Store) AppendBatch(entries []Entry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.appendUnlocked(entries)
 }
 
 // --- Append methods ---
