@@ -290,7 +290,7 @@ async function apiFetch(url, options = {}) {
         headers['Authorization'] = `Bearer ${sessionJWT}`;
         headers['X-User-ID'] = userID;
     }
-    if (browseCapToken) {
+    if (browseCapToken && !headers['X-Capability-Token']) {
         headers['X-Capability-Token'] = browseCapToken;
     }
     const res = await fetch(url, { ...options, headers });
@@ -563,11 +563,14 @@ async function saveDocument() {
     try {
         const stashRes = await apiFetch(`${API}/stash`, { method: 'POST', body: content });
         if (!stashRes.ok) throw new Error('failed to stash document');
-        const { hash } = await stashRes.json();
+        const { hash, capability } = await stashRes.json();
 
+        // /name requires PermWrite, but the ambient wildcard capability from
+        // login is PermRead-only. The stash we just made comes with its own
+        // hash-scoped PermWrite capability — use that instead for this call.
         const nameRes = await apiFetch(
             `${API}/name?namespace=${encodeURIComponent(NOTEBOOK_NAMESPACE)}&label=${encodeURIComponent(currentTag)}&hash=${encodeURIComponent(hash)}`,
-            { method: 'POST' }
+            { method: 'POST', headers: { 'X-Capability-Token': JSON.stringify(capability) } }
         );
         if (!nameRes.ok) throw new Error('failed to point notebook name at new document');
 
