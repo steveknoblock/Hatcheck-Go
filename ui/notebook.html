@@ -472,6 +472,28 @@ async function loadDocument(tag) {
 // Loads every post tagged with `tag`, fetches each one's content and
 // creation time, excludes the document itself (it carries the same tag
 // but belongs in the left pane, not the stream), and renders newest first.
+// Walks the supersedes chain backward from a document hash, returning the
+// current hash plus every version it replaced. The name index only keeps
+// the current hash, but nothing in an event-sourced log actually discards
+// the history — this just reads back what saveDocument's relations record.
+async function documentVersionChain(startHash) {
+    const chain = new Set();
+    let current = startHash;
+    while (current && !chain.has(current)) {
+        chain.add(current);
+        try {
+            const res = await apiFetch(`${API}/relations?hash=${encodeURIComponent(current)}`);
+            if (!res.ok) break;
+            const { outgoing } = await res.json();
+            const supersedes = (outgoing || []).find(r => r.rel === 'supersedes');
+            current = supersedes ? supersedes.to : null;
+        } catch (err) {
+            break;
+        }
+    }
+    return chain;
+}
+
 async function loadStream(tag) {
     const listEl = document.getElementById('stream-list');
     listEl.innerHTML = '';
@@ -487,7 +509,8 @@ async function loadStream(tag) {
         return;
     }
 
-    hashes = (hashes || []).filter(h => h !== docHash);
+    const supersededHashes = docHash ? await documentVersionChain(docHash) : new Set();
+    hashes = (hashes || []).filter(h => !supersededHashes.has(h));
 
     if (hashes.length === 0) {
         listEl.innerHTML = '<div class="stream-empty">No posts tagged #' + escHtml(tag) + ' yet.</div>';
@@ -557,6 +580,7 @@ async function saveDocument() {
     if (!currentTag) return;
     const btn = document.getElementById('save-btn');
     const content = document.getElementById('doc-textarea').value;
+    const previousDocHash = docHash;
 
     btn.disabled = true;
     btn.textContent = 'Saving…';
@@ -573,6 +597,22 @@ async function saveDocument() {
             { method: 'POST', headers: { 'X-Capability-Token': JSON.stringify(capability) } }
         );
         if (!nameRes.ok) throw new Error('failed to point notebook name at new document');
+
+        // Chain this version back to the one it replaces. The document is an
+        // ordinary tagged post, so without this the old version would sit in
+        // the tag's stream forever, indistinguishable from a real post.
+        if (previousDocHash) {
+            const relRes = await apiFetch(`${API}/relation`, {
+                method: 'POST',
+                body: JSON.stringify({ from: hash, rel: 'supersedes', to: previousDocHash }),
+            });
+            if (!relRes.ok) {
+                // Not fatal to the save itself — the new document is live
+                // either way — but the old version will linger in the
+                // stream until this link exists, so surface it.
+                showToast('Save partly failed', 'Document saved, but the old version may still show up in the stream.', true);
+            }
+        }
 
         docHash = hash;
         document.getElementById('doc-status').textContent = 'Saved.';
