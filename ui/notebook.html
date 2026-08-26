@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hatcheck — Notebook</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="http://fonts.googleapis.com/css?family=Lato|Lora|Inconsolata" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg:          #eeeeee;
+            --surface:     #e4e4e4;
+            --surface2:    #d8d8d8;
+            --border:      #cccccc;
+            --accent:      #3377aa;
+            --accent-dim:  #255580;
+            --text:        #000000;
+            --text-dim:    #666666;
+            --text-muted:  #999999;
+            --danger:      #cc3333;
+            --mono:        'Inconsolata', monospace;
+            --sans:        'Lato', sans-serif;
+            --serif:       'Lora', serif;
+        }
+
+        html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--sans); }
+        body { display: flex; flex-direction: column; }
+
+        /* ── Header ── */
+        header {
+            display: flex; align-items: center; gap: 16px;
+            padding: 12px 20px;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+        }
+        header h1 { font-size: 16px; font-weight: 800; letter-spacing: -0.3px; }
+        header .back-link {
+            font-size: 12px; color: var(--text-dim); text-decoration: none;
+            border: 1px solid var(--border); padding: 4px 10px;
+        }
+        header .back-link:hover { color: var(--accent); border-color: var(--accent); }
+        header .spacer { flex: 1; }
+        .btn-logout {
+            padding: 4px 10px; background: transparent; border: 1px solid var(--border);
+            color: var(--text-dim); font-family: var(--sans); font-size: 10px; font-weight: 700;
+            letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; transition: all 0.15s;
+        }
+        .btn-logout:hover { border-color: var(--danger); color: var(--danger); }
+
+        /* ── Tag bar ── */
+        .tag-bar {
+            display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+            padding: 10px 20px;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+        }
+        .tag-input-wrap { display: flex; gap: 6px; }
+        .tag-input {
+            background: var(--bg); border: 1px solid var(--border); color: var(--text);
+            font-family: var(--mono); font-size: 13px; padding: 6px 10px; outline: none;
+            width: 200px; transition: border-color 0.15s;
+        }
+        .tag-input:focus { border-color: var(--accent); }
+        .btn {
+            font-family: var(--sans); font-size: 12px; font-weight: 700; padding: 6px 14px;
+            border: 1px solid var(--border); background: var(--surface2); color: var(--text);
+            cursor: pointer; transition: all 0.15s;
+        }
+        .btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+        .btn-primary:hover:not(:disabled) { background: var(--accent-dim); border-color: var(--accent-dim); color: #fff; }
+
+        .known-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+        .tag-pill {
+            font-size: 11px; font-family: var(--mono); color: var(--text-dim);
+            border: 1px solid var(--border); padding: 3px 9px; cursor: pointer; transition: all 0.15s;
+        }
+        .tag-pill:hover { color: var(--accent); border-color: var(--accent); }
+        .tag-pill.active { color: #fff; background: var(--accent); border-color: var(--accent); }
+
+        /* ── Empty state ── */
+        .empty-state {
+            flex: 1; display: flex; align-items: center; justify-content: center;
+            color: var(--text-muted); font-size: 13px; text-align: center; line-height: 1.8;
+        }
+
+        /* ── Flow layout ── */
+        .flow-wrap {
+            display: none;
+            flex: 1;
+            min-height: 0;
+            grid-template-columns: 1fr 4px 1fr;
+        }
+        .flow-wrap.active { display: grid; }
+
+        .flow-sticky {
+            display: flex; flex-direction: column;
+            min-width: 280px;
+            padding: 20px 24px;
+            overflow: hidden;
+        }
+        .flow-tag {
+            display: inline-block; font-family: var(--mono); font-size: 11px;
+            color: var(--accent); margin-bottom: 10px;
+        }
+        .doc-textarea {
+            flex: 1; resize: none; width: 100%;
+            background: var(--surface); border: 1px solid var(--border); color: var(--text);
+            font-family: var(--serif); font-size: 15px; line-height: 1.7;
+            padding: 16px; outline: none; transition: border-color 0.15s;
+        }
+        .doc-textarea:focus { border-color: var(--accent); }
+        .doc-footer {
+            display: flex; align-items: center; gap: 10px; margin-top: 10px;
+        }
+        .doc-status { font-size: 11px; color: var(--text-muted); flex: 1; }
+
+        /* ── Divider ── */
+        .divider {
+            position: relative;
+            background: var(--border);
+            cursor: col-resize;
+            flex-shrink: 0;
+            transition: background 0.15s;
+        }
+        .divider:hover, .divider.dragging { background: var(--accent); }
+        .divider::after {
+            content: '';
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 4px; height: 2rem; background: var(--text-muted); border-radius: 2px;
+        }
+
+        /* ── Stream (scroll) pane ── */
+        .flow-scroll {
+            display: flex; flex-direction: column;
+            min-width: 280px;
+            padding: 20px 24px;
+            overflow-y: auto;
+        }
+        .composer {
+            display: flex; flex-direction: column; gap: 8px;
+            margin-bottom: 20px; padding-bottom: 20px;
+            border-bottom: 1px solid var(--border);
+        }
+        .composer-textarea {
+            width: 100%; resize: vertical; min-height: 60px;
+            background: var(--surface); border: 1px solid var(--border); color: var(--text);
+            font-family: var(--sans); font-size: 13px; line-height: 1.6;
+            padding: 10px 12px; outline: none; transition: border-color 0.15s;
+        }
+        .composer-textarea:focus { border-color: var(--accent); }
+        .composer-footer { display: flex; align-items: center; gap: 10px; }
+        .composer-hint { font-size: 11px; color: var(--text-muted); flex: 1; }
+
+        .stream-empty { color: var(--text-muted); font-size: 12px; text-align: center; padding: 30px 0; }
+
+        .post {
+            background: var(--surface); border: 1px solid var(--border);
+            padding: 12px 14px; margin-bottom: 12px;
+        }
+        .post-meta {
+            display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
+        }
+        .post-date { font-size: 10px; color: var(--text-muted); font-family: var(--mono); flex: 1; }
+        .post-merge {
+            font-size: 10px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+            color: var(--accent); background: transparent; border: 1px solid var(--accent);
+            padding: 3px 8px; cursor: pointer; transition: all 0.15s;
+        }
+        .post-merge:hover { background: var(--accent); color: #fff; }
+        .post-body {
+            font-size: 13px; line-height: 1.6; color: var(--text); white-space: pre-wrap;
+        }
+
+        /* ── Responsive ── */
+        @media (max-width: 750px) {
+            .flow-wrap.active { display: flex; flex-direction: column; }
+            .divider { display: none; }
+            .flow-sticky { max-height: 40vh; }
+        }
+
+        /* ── Login overlay (mirrors index.html) ── */
+        .login-overlay {
+            position: fixed; inset: 0; background: var(--bg);
+            display: flex; align-items: center; justify-content: center; z-index: 1000;
+        }
+        .login-overlay.hidden { display: none; }
+        .login-box {
+            background: var(--surface); border: 1px solid var(--border);
+            padding: 40px 36px; width: 340px;
+            display: flex; flex-direction: column; gap: 20px;
+        }
+        .login-title { font-family: var(--sans); font-size: 22px; font-weight: 800; color: var(--accent); letter-spacing: -0.5px; }
+        .login-sub { font-size: 11px; color: var(--text-dim); line-height: 1.7; margin-top: -10px; }
+        .login-input {
+            background: var(--bg); border: 1px solid var(--border); color: var(--text);
+            font-family: var(--sans); font-size: 13px; padding: 8px 10px; outline: none;
+            width: 100%; transition: border-color 0.15s;
+        }
+        .login-input:focus { border-color: var(--accent); }
+        .login-msg { font-size: 12px; color: var(--text-dim); min-height: 16px; text-align: center; }
+        .login-msg.success { color: var(--accent); }
+        .login-msg.error { color: var(--danger); }
+    </style>
+    <link rel="stylesheet" href="toast.css">
+    <script src="toast.js"></script>
+</head>
+<body>
+
+<!-- Login overlay — shown when no session JWT is present -->
+<div class="login-overlay" id="login-overlay">
+    <div class="login-box">
+        <div class="login-title">Hatcheck</div>
+        <div class="login-sub">Enter your email to receive a magic link.</div>
+        <input class="login-input" id="login-email" type="email"
+               placeholder="you@example.com"
+               onkeydown="if(event.key==='Enter') sendMagicLink()">
+        <button class="btn btn-primary" onclick="sendMagicLink()" id="login-btn">Send magic link</button>
+        <div class="login-msg" id="login-msg"></div>
+    </div>
+</div>
+
+<header>
+    <h1>Notebook</h1>
+    <a class="back-link" href="index.html">&larr; Browse</a>
+    <div class="spacer"></div>
+    <button class="btn-logout" id="logout-btn" onclick="logout()" style="display:none;">Sign out</button>
+</header>
+
+<div class="tag-bar">
+    <div class="tag-input-wrap">
+        <input class="tag-input" id="tag-input" type="text" placeholder="tag"
+               onkeydown="if(event.key==='Enter') openTagFromInput()">
+        <button class="btn btn-primary" onclick="openTagFromInput()">Open</button>
+    </div>
+    <div class="known-tags" id="known-tags"></div>
+</div>
+
+<div class="empty-state" id="empty-state">Enter a tag above to open its notebook.</div>
+
+<section class="flow-wrap" id="flow-wrap">
+    <section class="flow-sticky" id="flow-left">
+        <span class="flow-tag" id="doc-tag-label"></span>
+        <textarea class="doc-textarea" id="doc-textarea" placeholder="Notebook document — Markdown source."></textarea>
+        <div class="doc-footer">
+            <span class="doc-status" id="doc-status"></span>
+            <button class="btn btn-primary" id="save-btn" onclick="saveDocument()">Save</button>
+        </div>
+    </section>
+
+    <div class="divider" id="divider"></div>
+
+    <section class="flow-scroll" id="flow-right">
+        <div class="composer">
+            <textarea class="composer-textarea" id="composer-textarea" placeholder="New post…"></textarea>
+            <div class="composer-footer">
+                <span class="composer-hint" id="composer-hint"></span>
+                <button class="btn btn-primary" onclick="postToStream()">Post</button>
+            </div>
+        </div>
+        <div id="stream-list"></div>
+    </section>
+</section>
+
+<div class="toast" id="toast">
+    <div class="toast-label" id="toast-label">Info</div>
+    <div id="toast-msg"></div>
+</div>
+
+<script>
+const API = '';  // same origin
+
+// ── Auth state (mirrors index.html) ──
+let sessionJWT      = sessionStorage.getItem('session_jwt') || '';
+let userID           = sessionStorage.getItem('user_id') || '';
+let browseCapToken  = sessionStorage.getItem('browse_cap_token') || '';
+
+function updateAuthUI() {
+    const loggedIn = !!sessionJWT;
+    document.getElementById('login-overlay').classList.toggle('hidden', loggedIn);
+    document.getElementById('logout-btn').style.display = loggedIn ? '' : 'none';
+}
+
+async function apiFetch(url, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (sessionJWT) {
+        headers['Authorization'] = `Bearer ${sessionJWT}`;
+        headers['X-User-ID'] = userID;
+    }
+    if (browseCapToken) {
+        headers['X-Capability-Token'] = browseCapToken;
+    }
+    const res = await fetch(url, { ...options, headers });
+    if (res.status === 401) {
+        if (url.includes('/auth/')) {
+            clearAuth();
+            showToast('Session expired', 'Please sign in again.', true);
+            throw new Error('Session expired');
+        }
+        showToast('Access denied', 'You may not have a capability for this object.', true);
+        throw new Error('Access denied');
+    }
+    return res;
+}
+
+function clearAuth() {
+    sessionJWT = '';
+    userID = '';
+    browseCapToken = '';
+    sessionStorage.removeItem('session_jwt');
+    sessionStorage.removeItem('user_id');
+    sessionStorage.removeItem('browse_cap_token');
+    updateAuthUI();
+}
+
+function logout() {
+    clearAuth();
+    showToast('Signed out', 'See you next time.');
+}
+
+async function sendMagicLink() {
+    const email = document.getElementById('login-email').value.trim();
+    const msg   = document.getElementById('login-msg');
+    const btn   = document.getElementById('login-btn');
+
+    if (!email) {
+        msg.textContent = 'Enter your email address.';
+        msg.className = 'login-msg error';
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+    msg.textContent = '';
+    msg.className = 'login-msg';
+
+    try {
+        const res = await apiFetch(`${API}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email }),
+        });
+        if (!res.ok) throw new Error('Failed to send magic link');
+        msg.textContent = 'Magic link sent — check your email.';
+        msg.className = 'login-msg success';
+    } catch(err) {
+        msg.textContent = err.message;
+        msg.className = 'login-msg error';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Send magic link';
+    }
+}
+
+// Handle magic-link callback — server redirects here with session_jwt,
+// user_id, and read_cap as query parameters after authenticating the
+// Stytch token. default_ns is ignored here; Notebook isn't namespace-scoped.
+async function handleMagicLinkCallback() {
+    const params  = new URLSearchParams(window.location.search);
+    const jwt     = params.get('session_jwt');
+    const uid     = params.get('user_id');
+    const email   = params.get('email');
+    const readCap = params.get('read_cap');
+    if (!jwt) return;
+
+    window.history.replaceState({}, '', window.location.pathname);
+
+    sessionJWT = jwt;
+    userID     = uid;
+    sessionStorage.setItem('session_jwt', sessionJWT);
+    sessionStorage.setItem('user_id', userID);
+
+    if (readCap) {
+        browseCapToken = readCap;
+        sessionStorage.setItem('browse_cap_token', browseCapToken);
+    }
+
+    updateAuthUI();
+    showToast('Signed in', email || uid);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    handleMagicLinkCallback().then(updateAuthUI);
+    if (!sessionJWT) updateAuthUI();
+});
+
+// ── Notebook state ──
+const NOTEBOOK_NAMESPACE = 'notebook';
+let currentTag  = '';
+let docHash     = '';   // '' if this tag has no document yet
+let streamCache = {};   // hash -> content, populated while rendering the stream (for merge)
+
+// Load every notebook/<tag> name so the tag pills can show which tags
+// already have a document. This is read-only ambient metadata, same
+// pattern as index.html's namespace list.
+async function loadKnownTags() {
+    try {
+        const res = await apiFetch(`${API}/names?namespace=${encodeURIComponent(NOTEBOOK_NAMESPACE)}`);
+        if (!res.ok) return;
+        const names = await res.json();
+        const container = document.getElementById('known-tags');
+        container.innerHTML = '';
+        names.forEach(n => {
+            const pill = document.createElement('span');
+            pill.className = 'tag-pill' + (n.label === currentTag ? ' active' : '');
+            pill.textContent = '#' + n.label;
+            pill.title = 'Open notebook for #' + n.label;
+            pill.onclick = () => openTag(n.label);
+            container.appendChild(pill);
+        });
+    } catch (err) {
+        // Ambient listing failure isn't fatal — the tag input still works.
+    }
+}
+
+function openTagFromInput() {
+    const tag = document.getElementById('tag-input').value.trim().replace(/^#/, '');
+    if (!tag) return;
+    openTag(tag);
+}
+
+async function openTag(tag) {
+    currentTag = tag;
+    document.getElementById('tag-input').value = tag;
+    document.getElementById('doc-tag-label').textContent = '#' + tag;
+    document.getElementById('empty-state').style.display = 'none';
+    document.getElementById('flow-wrap').classList.add('active');
+    document.getElementById('doc-status').textContent = 'Loading…';
+    document.getElementById('composer-hint').textContent = '';
+
+    await Promise.all([loadDocument(tag), loadStream(tag)]);
+    loadKnownTags();
+}
+
+// Resolves notebook/<tag> to its current hash and loads that post's
+// content into the document textarea. No document yet is a normal state
+// (not an error) — the textarea just starts empty.
+async function loadDocument(tag) {
+    docHash = '';
+    try {
+        const res = await apiFetch(`${API}/names?namespace=${encodeURIComponent(NOTEBOOK_NAMESPACE)}`);
+        if (res.ok) {
+            const names = await res.json();
+            const match = names.find(n => n.label === tag);
+            if (match) docHash = match.hash;
+        }
+    } catch (err) {
+        showToast('Load failed', 'Could not resolve the notebook document.', true);
+    }
+
+    const textarea = document.getElementById('doc-textarea');
+    if (!docHash) {
+        textarea.value = '';
+        document.getElementById('doc-status').textContent = 'No document yet for #' + tag + ' — save to create one.';
+        return;
+    }
+
+    try {
+        const res = await apiFetch(`${API}/fetch?hash=${encodeURIComponent(docHash)}`);
+        if (!res.ok) throw new Error('fetch failed');
+        textarea.value = await res.text();
+        document.getElementById('doc-status').textContent = 'Loaded.';
+    } catch (err) {
+        showToast('Load failed', 'Could not fetch the notebook document content.', true);
+        document.getElementById('doc-status').textContent = 'Failed to load document.';
+    }
+}
+
+// Loads every post tagged with `tag`, fetches each one's content and
+// creation time, excludes the document itself (it carries the same tag
+// but belongs in the left pane, not the stream), and renders newest first.
+async function loadStream(tag) {
+    const listEl = document.getElementById('stream-list');
+    listEl.innerHTML = '';
+    streamCache = {};
+
+    let hashes = [];
+    try {
+        const res = await apiFetch(`${API}/query?index=tag&key=${encodeURIComponent(tag)}`);
+        if (!res.ok) throw new Error('query failed');
+        hashes = await res.json();
+    } catch (err) {
+        showToast('Load failed', 'Could not load the post stream.', true);
+        return;
+    }
+
+    hashes = (hashes || []).filter(h => h !== docHash);
+
+    if (hashes.length === 0) {
+        listEl.innerHTML = '<div class="stream-empty">No posts tagged #' + escHtml(tag) + ' yet.</div>';
+        return;
+    }
+
+    const posts = await Promise.all(hashes.map(async hash => {
+        try {
+            const [metaRes, contentRes] = await Promise.all([
+                apiFetch(`${API}/object-meta?hash=${encodeURIComponent(hash)}`),
+                apiFetch(`${API}/fetch?hash=${encodeURIComponent(hash)}`),
+            ]);
+            const meta    = metaRes.ok ? await metaRes.json() : { created: null };
+            const content = contentRes.ok ? await contentRes.text() : '';
+            return { hash, created: meta.created, content };
+        } catch (err) {
+            return { hash, created: null, content: '' };
+        }
+    }));
+
+    posts.sort((a, b) => {
+        if (!a.created) return 1;
+        if (!b.created) return -1;
+        return new Date(b.created) - new Date(a.created);
+    });
+
+    posts.forEach(p => streamCache[p.hash] = p.content);
+
+    listEl.innerHTML = posts.map(p => `
+        <div class="post">
+            <div class="post-meta">
+                <span class="post-date">${p.created ? escHtml(new Date(p.created).toLocaleString()) : 'unknown date'}</span>
+                <button class="post-merge" onclick="mergePost('${escAttr(p.hash)}')">Merge &rarr;</button>
+            </div>
+            <div class="post-body">${escHtml(p.content)}</div>
+        </div>
+    `).join('');
+}
+
+// Inserts a post's content into the document textarea at the current
+// cursor position (or replacing the current selection), rather than
+// always appending at the end.
+function mergePost(hash) {
+    const content = streamCache[hash];
+    if (content === undefined) return;
+    const textarea = document.getElementById('doc-textarea');
+    const start = textarea.selectionStart;
+    const end   = textarea.selectionEnd;
+    const before = textarea.value.slice(0, start);
+    const after  = textarea.value.slice(end);
+    // Keep merged content visually separated from surrounding text without
+    // assuming anything about what's already there.
+    const needsLeadingBreak  = before.length > 0 && !before.endsWith('\n\n');
+    const needsTrailingBreak = after.length > 0 && !after.startsWith('\n\n');
+    const insert = (needsLeadingBreak ? '\n\n' : '') + content + (needsTrailingBreak ? '\n\n' : '');
+    textarea.value = before + insert + after;
+    const cursor = before.length + insert.length;
+    textarea.focus();
+    textarea.setSelectionRange(cursor, cursor);
+    document.getElementById('doc-status').textContent = 'Merged — not yet saved.';
+}
+
+// Writes the textarea's current content as a new stash and points
+// notebook/<tag> at it. /name already creates-or-updates, so the client
+// doesn't need to know whether this tag already had a document.
+async function saveDocument() {
+    if (!currentTag) return;
+    const btn = document.getElementById('save-btn');
+    const content = document.getElementById('doc-textarea').value;
+
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    try {
+        const stashRes = await apiFetch(`${API}/stash`, { method: 'POST', body: content });
+        if (!stashRes.ok) throw new Error('failed to stash document');
+        const { hash } = await stashRes.json();
+
+        const nameRes = await apiFetch(
+            `${API}/name?namespace=${encodeURIComponent(NOTEBOOK_NAMESPACE)}&label=${encodeURIComponent(currentTag)}&hash=${encodeURIComponent(hash)}`,
+            { method: 'POST' }
+        );
+        if (!nameRes.ok) throw new Error('failed to point notebook name at new document');
+
+        docHash = hash;
+        document.getElementById('doc-status').textContent = 'Saved.';
+        showToast('Saved', 'Notebook document for #' + currentTag + ' updated.');
+        loadStream(currentTag); // the document's new version is tagged too — keep it out of the stream
+    } catch (err) {
+        showToast('Save failed', err.message, true);
+        document.getElementById('doc-status').textContent = 'Save failed.';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Save';
+    }
+}
+
+// Posts new content tagged with the current notebook's tag. If the user
+// didn't type the tag inline, it's prepended — ParseTags on the server
+// only recognizes tags actually present in the content.
+async function postToStream() {
+    const textarea = document.getElementById('composer-textarea');
+    let content = textarea.value.trim();
+    if (!content || !currentTag) return;
+
+    const tagToken = '#' + currentTag;
+    if (!content.split(/\s+/).includes(tagToken)) {
+        content = content + '\n\n' + tagToken;
+    }
+
+    try {
+        const res = await apiFetch(`${API}/stash`, { method: 'POST', body: content });
+        if (!res.ok) throw new Error('failed to post');
+        textarea.value = '';
+        document.getElementById('composer-hint').textContent = '';
+        loadStream(currentTag);
+    } catch (err) {
+        showToast('Post failed', err.message, true);
+    }
+}
+
+// ── Draggable divider ──
+document.querySelectorAll('.flow-wrap').forEach(wrap => {
+    const divider = wrap.querySelector('.divider');
+    const left    = wrap.querySelector('.flow-sticky');
+    if (!divider || !left) return;
+
+    let dragging = false;
+
+    divider.addEventListener('mousedown', () => {
+        dragging = true;
+        divider.classList.add('dragging');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+    });
+
+    document.addEventListener('mousemove', e => {
+        if (!dragging) return;
+        const rect = wrap.getBoundingClientRect();
+        const min  = 240;
+        const max  = wrap.offsetWidth - 244;
+        const w    = Math.max(min, Math.min(max, e.clientX - rect.left));
+        wrap.style.gridTemplateColumns = `${w}px 4px 1fr`;
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (!dragging) return;
+        dragging = false;
+        divider.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+    });
+});
+
+// ── Helpers ──
+function escHtml(str) {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function escAttr(str) {
+    return String(str).replace(/'/g, "\\'");
+}
+
+// ── Startup ──
+loadKnownTags();
+</script>
+
+</body>
+</html>
