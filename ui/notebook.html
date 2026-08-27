@@ -174,6 +174,9 @@
         .post-body {
             font-size: 13px; line-height: 1.6; color: var(--text); white-space: pre-wrap;
         }
+        .post-failed { border-color: var(--danger); border-style: dashed; }
+        .post-failed .post-date { color: var(--danger); }
+        .post-body-failed { color: var(--text-muted); font-style: italic; }
 
         /* ── Responsive ── */
         @media (max-width: 750px) {
@@ -472,24 +475,43 @@ async function loadDocument(tag) {
 // Loads every post tagged with `tag`, fetches each one's content and
 // creation time, excludes the document itself (it carries the same tag
 // but belongs in the left pane, not the stream), and renders newest first.
+// A hash's supersedes-predecessor is an immutable fact once written — it
+// never changes, so it's safe to cache forever with no invalidation logic.
+// Keyed by hash rather than by tag, since the relationship doesn't depend
+// on which tag's notebook you were viewing when you looked it up.
+const predecessorCache = new Map(); // hash -> predecessor hash | null
+
+async function resolvePredecessor(hash) {
+    if (predecessorCache.has(hash)) return predecessorCache.get(hash);
+    let pred = null;
+    try {
+        const res = await apiFetch(`${API}/relations?hash=${encodeURIComponent(hash)}`);
+        if (res.ok) {
+            const { outgoing } = await res.json();
+            const supersedes = (outgoing || []).find(r => r.rel === 'supersedes');
+            pred = supersedes ? supersedes.to : null;
+        }
+    } catch (err) {
+        // Leave pred as null rather than caching a failure — a transient
+        // error here shouldn't be remembered as "no predecessor" forever.
+        return null;
+    }
+    predecessorCache.set(hash, pred);
+    return pred;
+}
+
 // Walks the supersedes chain backward from a document hash, returning the
 // current hash plus every version it replaced. The name index only keeps
 // the current hash, but nothing in an event-sourced log actually discards
 // the history — this just reads back what saveDocument's relations record.
+// Only the newest hop (the version just saved, if any) is ever a genuine
+// cache miss; everything beneath it was already resolved on a prior load.
 async function documentVersionChain(startHash) {
     const chain = new Set();
     let current = startHash;
     while (current && !chain.has(current)) {
         chain.add(current);
-        try {
-            const res = await apiFetch(`${API}/relations?hash=${encodeURIComponent(current)}`);
-            if (!res.ok) break;
-            const { outgoing } = await res.json();
-            const supersedes = (outgoing || []).find(r => r.rel === 'supersedes');
-            current = supersedes ? supersedes.to : null;
-        } catch (err) {
-            break;
-        }
+        current = await resolvePredecessor(current);
     }
     return chain;
 }
@@ -523,11 +545,14 @@ async function loadStream(tag) {
                 apiFetch(`${API}/object-meta?hash=${encodeURIComponent(hash)}`),
                 apiFetch(`${API}/fetch?hash=${encodeURIComponent(hash)}`),
             ]);
-            const meta    = metaRes.ok ? await metaRes.json() : { created: null };
-            const content = contentRes.ok ? await contentRes.text() : '';
-            return { hash, created: meta.created, content };
+            if (!metaRes.ok || !contentRes.ok) {
+                return { hash, created: null, content: '', failed: true };
+            }
+            const meta    = await metaRes.json();
+            const content = await contentRes.text();
+            return { hash, created: meta.created, content, failed: false };
         } catch (err) {
-            return { hash, created: null, content: '' };
+            return { hash, created: null, content: '', failed: true };
         }
     }));
 
@@ -537,9 +562,17 @@ async function loadStream(tag) {
         return new Date(b.created) - new Date(a.created);
     });
 
-    posts.forEach(p => streamCache[p.hash] = p.content);
+    posts.forEach(p => { if (!p.failed) streamCache[p.hash] = p.content; });
 
-    listEl.innerHTML = posts.map(p => `
+    listEl.innerHTML = posts.map(p => p.failed ? `
+        <div class="post post-failed">
+            <div class="post-meta">
+                <span class="post-date">Failed to load</span>
+                <button class="post-merge" onclick="loadStream(currentTag)">Retry</button>
+            </div>
+            <div class="post-body post-body-failed">This post couldn't be fetched — possibly rate-limited. Retry to reload the stream.</div>
+        </div>
+    ` : `
         <div class="post">
             <div class="post-meta">
                 <span class="post-date">${p.created ? escHtml(new Date(p.created).toLocaleString()) : 'unknown date'}</span>
