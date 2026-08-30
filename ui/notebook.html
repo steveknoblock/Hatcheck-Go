@@ -434,7 +434,11 @@ async function openTag(tag) {
     document.getElementById('doc-status').textContent = 'Loading…';
     document.getElementById('composer-hint').textContent = '';
 
-    await Promise.all([loadDocument(tag), loadStream(tag)]);
+    // loadStream reads docHash to know which document versions to exclude,
+    // but only loadDocument sets it — running them concurrently risked
+    // loadStream reading docHash while it was still unset.
+    await loadDocument(tag);
+    await loadStream(tag);
     loadKnownTags();
 }
 
@@ -516,7 +520,15 @@ async function documentVersionChain(startHash) {
     return chain;
 }
 
+// Guards against overlapping loadStream calls (e.g. a save's automatic
+// reload still in flight when another save/merge triggers a new one).
+// Only the most recently started call is allowed to write to the DOM —
+// an older call that resolves late discards its result instead of
+// clobbering a newer, more current render.
+let streamLoadGeneration = 0;
+
 async function loadStream(tag) {
+    const myGeneration = ++streamLoadGeneration;
     const listEl = document.getElementById('stream-list');
     listEl.innerHTML = '';
     streamCache = {};
@@ -527,12 +539,16 @@ async function loadStream(tag) {
         if (!res.ok) throw new Error('query failed');
         hashes = await res.json();
     } catch (err) {
-        showToast('Load failed', 'Could not load the post stream.', true);
+        if (myGeneration === streamLoadGeneration) {
+            showToast('Load failed', 'Could not load the post stream.', true);
+        }
         return;
     }
 
     const supersededHashes = docHash ? await documentVersionChain(docHash) : new Set();
     hashes = (hashes || []).filter(h => !supersededHashes.has(h));
+
+    if (myGeneration !== streamLoadGeneration) return; // a newer call has since started
 
     if (hashes.length === 0) {
         listEl.innerHTML = '<div class="stream-empty">No posts tagged #' + escHtml(tag) + ' yet.</div>';
@@ -561,6 +577,8 @@ async function loadStream(tag) {
         if (!b.created) return -1;
         return new Date(b.created) - new Date(a.created);
     });
+
+    if (myGeneration !== streamLoadGeneration) return; // a newer call has since started
 
     posts.forEach(p => { if (!p.failed) streamCache[p.hash] = p.content; });
 
