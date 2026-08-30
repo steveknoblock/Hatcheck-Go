@@ -1,6 +1,7 @@
 # Hatcheck
 hatcheck
 hatcheck-server
+/backups/
 /objects/
 /metadata/
 
