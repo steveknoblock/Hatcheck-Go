@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hatcheck — Reader</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="http://fonts.googleapis.com/css?family=Lato|Lora|Inconsolata" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg:          #eeeeee;
+            --surface:     #e4e4e4;
+            --surface2:    #d8d8d8;
+            --border:      #cccccc;
+            --accent:      #3377aa;
+            --accent-dim:  #255580;
+            --text:        #000000;
+            --text-dim:    #666666;
+            --text-muted:  #999999;
+            --danger:      #cc3333;
+            --collection:  #2277bb;
+            --relation:    #996622;
+            --mono:        'Inconsolata', monospace;
+            --sans:        'Lato', sans-serif;
+            --serif:       'Lora', serif;
+        }
+
+        html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--sans); overflow: hidden; }
+
+        /* ── Header ── */
+        header {
+            height: 48px;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            gap: 14px;
+            flex-shrink: 0;
+            z-index: 10;
+        }
+
+        header h1 {
+            font-family: var(--serif);
+            font-weight: 700;
+            font-size: 20px;
+            color: var(--accent);
+            flex-shrink: 0;
+        }
+
+        header .mode-tag {
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 2px 8px;
+            flex-shrink: 0;
+        }
+
+        .ns-form {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .ns-input {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: var(--sans);
+            font-size: 12px;
+            padding: 5px 8px;
+            outline: none;
+            width: 180px;
+        }
+        .ns-input:focus { border-color: var(--accent); }
+
+        .header-right {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .btn {
+            padding: 5px 14px;
+            border: none;
+            font-family: var(--sans);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: all 0.15s;
+            flex-shrink: 0;
+        }
+        .btn-primary { background: var(--accent); color: #ffffff; }
+        .btn-primary:hover { background: var(--accent-dim); }
+        .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-ghost {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-dim);
+        }
+        .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+        .btn-logout {
+            padding: 4px 10px;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-dim);
+            font-family: var(--sans);
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .btn-logout:hover { border-color: var(--danger); color: var(--danger); }
+
+        /* ── Workspace ── */
+        .workspace {
+            display: flex;
+            height: calc(100vh - 48px);
+            overflow: hidden;
+        }
+
+        /* ── Reading pane ── */
+        .reader-pane {
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            justify-content: center;
+            background: var(--bg);
+        }
+
+        .reader-article {
+            width: 100%;
+            max-width: 640px;
+            padding: 56px 32px 80px;
+        }
+
+        .reader-eyebrow {
+            font-family: var(--sans);
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+        }
+
+        .reader-title {
+            font-family: var(--serif);
+            font-size: 30px;
+            font-weight: 700;
+            line-height: 1.25;
+            color: var(--text);
+            margin-bottom: 6px;
+            word-break: break-word;
+        }
+
+        .reader-hash {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-bottom: 32px;
+        }
+
+        .reader-body {
+            font-family: var(--serif);
+            font-size: 18px;
+            line-height: 1.75;
+            color: var(--text);
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .reader-empty, .reader-notice {
+            font-family: var(--sans);
+            font-size: 13px;
+            color: var(--text-dim);
+            line-height: 1.7;
+        }
+
+        .reader-notice {
+            border-left: 3px solid var(--accent);
+            background: rgba(51,119,170,0.06);
+            padding: 12px 16px;
+            margin-bottom: 24px;
+        }
+
+        /* Picker shown in the reading pane when no post is open yet */
+        .picker-list { margin-top: 8px; }
+        .picker-item {
+            padding: 10px 4px;
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+            font-family: var(--sans);
+            font-size: 14px;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: color 0.1s;
+        }
+        .picker-item:hover { color: var(--accent); }
+        .picker-item .picker-kind {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-muted);
+            flex-shrink: 0;
+        }
+
+        /* ── Map pane (right sidebar) ── */
+        .map-pane {
+            width: 380px;
+            min-width: 260px;
+            max-width: 560px;
+            flex-shrink: 0;
+            border-left: 1px solid var(--border);
+            background: var(--surface);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .map-pane-header {
+            padding: 12px 14px 0;
+            flex-shrink: 0;
+        }
+
+        .map-pane-label {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+            margin-bottom: 10px;
+        }
+
+        .map-metric-tabs {
+            display: flex;
+            gap: 6px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .map-metric-btn {
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text-dim);
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.1s;
+        }
+        .map-metric-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .map-metric-btn.active {
+            background: rgba(51,119,170,0.12);
+            border-color: var(--accent);
+            color: var(--accent);
+            font-weight: 700;
+        }
+
+        .map-treemap-wrap {
+            position: relative;
+            width: 100%;
+            flex: 1;
+            min-height: 260px;
+        }
+
+        .map-treemap {
+            position: absolute;
+            inset: 0;
+            margin: 12px;
+        }
+
+        .map-tile {
+            position: absolute;
+            box-sizing: border-box;
+            border: 1px solid var(--surface);
+            padding: 6px 8px;
+            overflow: hidden;
+            cursor: pointer;
+            background: var(--surface2);
+            transition: filter 0.1s;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+        }
+        .map-tile:hover { filter: brightness(1.08); }
+        .map-tile.map-tile-out {
+            border-left: 3px solid var(--relation);
+            background: rgba(153, 102, 34, 0.10);
+        }
+        .map-tile.map-tile-in {
+            border-left: 3px solid var(--accent);
+            background: rgba(51, 119, 170, 0.10);
+        }
+        .map-tile-rel {
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .map-tile-label {
+            font-size: 12px;
+            color: var(--text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .map-empty {
+            padding: 24px 16px;
+            font-size: 11px;
+            color: var(--text-muted);
+            text-align: center;
+        }
+
+        /* ── Login overlay (same pattern as index.html) ── */
+        .login-overlay {
+            position: fixed;
+            inset: 0;
+            background: var(--bg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .login-overlay.hidden { display: none; }
+        .login-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            padding: 40px 36px;
+            width: 340px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .login-title {
+            font-family: var(--sans);
+            font-size: 22px;
+            font-weight: 800;
+            color: var(--accent);
+            letter-spacing: -0.5px;
+        }
+        .login-sub {
+            font-size: 11px;
+            color: var(--text-dim);
+            line-height: 1.7;
+            margin-top: -10px;
+        }
+        .login-input {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-family: var(--sans);
+            font-size: 13px;
+            padding: 8px 10px;
+            outline: none;
+            width: 100%;
+            transition: border-color 0.15s;
+        }
+        .login-input:focus { border-color: var(--accent); }
+        .login-msg {
+            font-size: 12px;
+            color: var(--text-dim);
+            min-height: 16px;
+            text-align: center;
+        }
+        .login-msg.success { color: var(--accent); }
+        .login-msg.error   { color: var(--danger); }
+    </style>
+    <link rel="stylesheet" href="toast.css">
+    <script src="toast.js"></script>
+</head>
+<body>
+
+<!-- Login overlay — shown when no session JWT is present. Mirrors index.html's
+     flow exactly, so reader.html works as a direct deep-link (e.g. a shared
+     post URL) without ever having visited the editor first. -->
+<div class="login-overlay" id="login-overlay">
+    <div class="login-box">
+        <div class="login-title">Hatcheck</div>
+        <div class="login-sub">Enter your email to receive a magic link.</div>
+        <input class="login-input" id="login-email" type="email"
+               placeholder="you@example.com"
+               onkeydown="if(event.key==='Enter') sendMagicLink()">
+        <button class="btn btn-primary" onclick="sendMagicLink()" id="login-btn">Send magic link</button>
+        <div class="login-msg" id="login-msg"></div>
+    </div>
+</div>
+
+<header>
+    <h1>Hatcheck</h1>
+    <span class="mode-tag">Reader · experimental</span>
+    <form class="ns-form" onsubmit="event.preventDefault(); loadNamespace();">
+        <input class="ns-input" id="ns-input" type="text" placeholder="namespace" autocomplete="off">
+        <button type="submit" class="btn btn-ghost">Open</button>
+    </form>
+    <div class="header-right">
+        <a class="btn btn-ghost" href="index.html" style="text-decoration:none; display:inline-block;">✎ Editor</a>
+        <button class="btn-logout" id="logout-btn" onclick="logout()" style="display:none">Sign out</button>
+    </div>
+</header>
+
+<div class="workspace">
+    <div class="reader-pane" id="reader-pane">
+        <div class="reader-article" id="reader-article">
+            <div class="reader-empty">Open a namespace above to start reading.</div>
+        </div>
+    </div>
+
+    <div class="map-pane">
+        <div class="map-pane-header">
+            <div class="map-pane-label">Relations map</div>
+            <div class="map-metric-tabs">
+                <button class="map-metric-btn active" id="map-metric-fanout" onclick="setMapMetric('fanout')">Fan-out</button>
+                <button class="map-metric-btn" id="map-metric-recency" onclick="setMapMetric('recency')">Recency</button>
+                <button class="map-metric-btn" id="map-metric-tags" onclick="setMapMetric('tags')">Tags</button>
+            </div>
+        </div>
+        <div class="map-treemap-wrap">
+            <div class="map-treemap" id="map-treemap"></div>
+            <div class="map-empty" id="map-empty" style="display:none">No relations for this object.</div>
+        </div>
+    </div>
+</div>
+
+<script>
+const API = '';  // same origin
+
+// ── Auth state (shared sessionStorage keys with index.html — logging in
+// on either page carries over to the other, same origin). ──
+let sessionJWT      = sessionStorage.getItem('session_jwt') || '';
+let userID          = sessionStorage.getItem('user_id') || '';
+let capabilityToken = sessionStorage.getItem('capability_token') || '';
+let browseCapToken  = sessionStorage.getItem('browse_cap_token') || '';
+let namespace       = sessionStorage.getItem('namespace') || '';
+
+function updateAuthUI() {
+    const loggedIn = !!sessionJWT;
+    document.getElementById('login-overlay').classList.toggle('hidden', loggedIn);
+    document.getElementById('logout-btn').style.display = loggedIn ? '' : 'none';
+}
+
+async function apiFetch(url, options = {}) {
+    const headers = { ...(options.headers || {}) };
+    if (sessionJWT) {
+        headers['Authorization'] = `Bearer ${sessionJWT}`;
+        headers['X-User-ID'] = userID;
+    }
+    const activeCap = capabilityToken || browseCapToken;
+    if (activeCap) {
+        headers['X-Capability-Token'] = activeCap;
+    }
+    const res = await fetch(url, { ...options, headers });
+    if (res.status === 401) {
+        if (url.includes('/auth/')) {
+            clearAuth();
+            showToast('Session expired', 'Please sign in again.', true);
+            throw new Error('Session expired');
+        }
+        showToast('Access denied', 'You may not have a capability for this object.', true);
+        throw new Error('Access denied');
+    }
+    return res;
+}
+
+function clearAuth() {
+    sessionJWT = ''; userID = ''; capabilityToken = ''; browseCapToken = '';
+    sessionStorage.removeItem('session_jwt');
+    sessionStorage.removeItem('user_id');
+    sessionStorage.removeItem('capability_token');
+    sessionStorage.removeItem('browse_cap_token');
+    sessionStorage.removeItem('namespace');
+    namespace = '';
+    updateAuthUI();
+}
+
+function logout() {
+    clearAuth();
+    showToast('Signed out', 'See you next time.');
+}
+
+async function sendMagicLink() {
+    const email = document.getElementById('login-email').value.trim();
+    const msg   = document.getElementById('login-msg');
+    const btn   = document.getElementById('login-btn');
+    if (!email) {
+        msg.textContent = 'Enter your email address.';
+        msg.className = 'login-msg error';
+        return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+    msg.textContent = '';
+    msg.className = 'login-msg';
+    try {
+        const res = await apiFetch(`${API}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email }),
+        });
+        if (!res.ok) throw new Error('Failed to send magic link');
+        msg.textContent = 'Magic link sent — check your email.';
+        msg.className = 'login-msg success';
+    } catch(err) {
+        msg.textContent = err.message;
+        msg.className = 'login-msg error';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Send magic link';
+    }
+}
+
+// Handle magic link callback, in case someone lands here directly from the
+// login email (e.g. a bookmark to reader.html). Identical to index.html's
+// handler so behavior is consistent regardless of which page catches it.
+async function handleMagicLinkCallback() {
+    const params = new URLSearchParams(window.location.search);
+    const jwt       = params.get('session_jwt');
+    const uid       = params.get('user_id');
+    const email     = params.get('email');
+    const readCap   = params.get('read_cap');
+    const defaultNs = params.get('default_ns');
+    if (!jwt) return;
+
+    sessionJWT = jwt;
+    userID     = uid;
+    sessionStorage.setItem('session_jwt', sessionJWT);
+    sessionStorage.setItem('user_id', userID);
+
+    if (readCap) {
+        browseCapToken = readCap;
+        sessionStorage.setItem('browse_cap_token', browseCapToken);
+    }
+    if (defaultNs && !namespace) {
+        namespace = defaultNs;
+        sessionStorage.setItem('namespace', namespace);
+    }
+
+    updateAuthUI();
+    showToast('Signed in', email || uid);
+}
+
+function loadCapabilityForHash(hash) {
+    const caps = JSON.parse(sessionStorage.getItem('capabilities') || '{}');
+    if (caps[hash]) {
+        capabilityToken = JSON.stringify(caps[hash]);
+        sessionStorage.setItem('capability_token', capabilityToken);
+    } else {
+        capabilityToken = '';
+        sessionStorage.removeItem('capability_token');
+    }
+}
+
+// ── Reader state ──
+let nameList     = [];             // [{label, hash, kind}] for the open namespace
+let namesByHash  = {};             // hash -> {label, kind}, for map tile labels
+let currentHash  = null;
+let currentLabel = null;
+let mapTiles     = [];
+let mapMetric    = 'fanout';
+
+// object-meta / fan-out caches — same rationale as index.html: CAS objects
+// are immutable, so per-hash metadata is safe to cache for the session.
+const objectMetaCache = {};
+const fanOutCache      = {};
+
+async function getObjectMeta(hash) {
+    if (objectMetaCache[hash]) return objectMetaCache[hash];
+    const res = await apiFetch(`${API}/object-meta?hash=${hash}`);
+    const meta = res.ok ? await res.json() : { tags: [], created: null };
+    objectMetaCache[hash] = meta;
+    return meta;
+}
+
+async function getFanOut(hash) {
+    if (fanOutCache[hash] !== undefined) return fanOutCache[hash];
+    const res = await apiFetch(`${API}/relations?hash=${hash}`);
+    const rel = res.ok ? await res.json() : { outgoing: [], incoming: [] };
+    const fanOut = (rel.outgoing || []).length + (rel.incoming || []).length;
+    fanOutCache[hash] = fanOut;
+    return fanOut;
+}
+
+// ── Namespace / picker ──
+async function loadNamespace() {
+    const input = document.getElementById('ns-input').value.trim();
+    if (!input) return;
+    namespace = input;
+    sessionStorage.setItem('namespace', namespace);
+    currentHash = null;
+    currentLabel = null;
+
+    try {
+        const res = await apiFetch(`${API}/names?namespace=${encodeURIComponent(namespace)}`);
+        if (!res.ok) throw new Error('Failed to load namespace');
+        nameList = await res.json();
+        namesByHash = {};
+        for (const n of nameList) namesByHash[n.hash] = { label: n.label, kind: n.kind };
+        renderPicker();
+        clearMap();
+    } catch (err) {
+        showToast('Error', err.message, true);
+    }
+}
+
+function renderPicker() {
+    const article = document.getElementById('reader-article');
+    if (nameList.length === 0) {
+        article.innerHTML = `<div class="reader-empty">Nothing in this namespace yet.</div>`;
+        return;
+    }
+    article.innerHTML = `
+        <div class="reader-eyebrow">${escHtml(namespace)}</div>
+        <div class="reader-title" style="font-size:22px">Choose something to read</div>
+        <div class="picker-list">
+            ${nameList.map(n => `
+                <div class="picker-item" onclick="openPost('${escAttr(n.hash)}', '${escAttr(n.label)}')">
+                    <span class="picker-kind">${escHtml(n.kind || 'stash')}</span>
+                    <span>${escHtml(n.label)}</span>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+// ── Opening a post ──
+async function openPost(hash, label) {
+    currentHash = hash;
+    currentLabel = label || null;
+    loadCapabilityForHash(hash);
+
+    try {
+        const res = await apiFetch(`${API}/fetch?hash=${hash}`);
+        if (res.status === 403) throw new Error('No capability for this object');
+        if (res.status === 404) throw new Error('Object not found');
+        if (!res.ok) throw new Error(`Fetch failed (${res.status})`);
+        const content = await res.text();
+        const trimmed = content.trimEnd();
+
+        let parsed;
+        try { parsed = JSON.parse(trimmed); } catch (e) {}
+
+        if (Array.isArray(parsed) && parsed.every(h => typeof h === 'string')) {
+            renderCollectionNotice(parsed);
+        } else if (parsed && typeof parsed === 'object' && parsed.from && parsed.to && parsed.rel) {
+            renderRelationNotice(parsed);
+        } else {
+            renderArticle(trimmed);
+        }
+
+        loadMapPanel(hash);
+    } catch (err) {
+        showToast('Error', err.message, true);
+    }
+}
+
+function renderArticle(content) {
+    const article = document.getElementById('reader-article');
+    const label = currentLabel || (currentHash ? currentHash.slice(0, 8) + '…' : 'Untitled');
+    article.innerHTML = `
+        <div class="reader-eyebrow">${escHtml(namespace || '')}</div>
+        <div class="reader-title">${escHtml(label)}</div>
+        <div class="reader-hash">${escHtml(currentHash)}</div>
+        <div class="reader-body">${escHtml(content) || '<span class="reader-empty">This post is empty.</span>'}</div>
+    `;
+}
+
+function renderCollectionNotice(members) {
+    const article = document.getElementById('reader-article');
+    const label = currentLabel || (currentHash.slice(0, 8) + '…');
+    article.innerHTML = `
+        <div class="reader-eyebrow">${escHtml(namespace || '')}</div>
+        <div class="reader-title">${escHtml(label)}</div>
+        <div class="reader-hash">${escHtml(currentHash)}</div>
+        <div class="reader-notice">This is a collection of ${members.length} object${members.length === 1 ? '' : 's'}, not a readable post. Pick a member below, or use the map to navigate.</div>
+        <div class="picker-list">
+            ${members.map(h => {
+                const known = namesByHash[h];
+                const label = known ? known.label : h.slice(0, 8) + '…';
+                return `<div class="picker-item" onclick="openPost('${escAttr(h)}', '${escAttr(label)}')">
+                    <span class="picker-kind">${known ? escHtml(known.kind || 'stash') : 'object'}</span>
+                    <span>${escHtml(label)}</span>
+                </div>`;
+            }).join('')}
+        </div>
+    `;
+}
+
+function renderRelationNotice(rel) {
+    const article = document.getElementById('reader-article');
+    const label = currentLabel || (currentHash.slice(0, 8) + '…');
+    article.innerHTML = `
+        <div class="reader-eyebrow">${escHtml(namespace || '')}</div>
+        <div class="reader-title">${escHtml(label)}</div>
+        <div class="reader-hash">${escHtml(currentHash)}</div>
+        <div class="reader-notice">This is a relation object (${escHtml(rel.rel)}), not a readable post. Use the map to navigate to what it connects.</div>
+    `;
+}
+
+// ── Map panel ──
+function clearMap() {
+    mapTiles = [];
+    document.getElementById('map-treemap').innerHTML = '';
+    document.getElementById('map-empty').style.display = 'none';
+}
+
+async function loadMapPanel(hash) {
+    if (!hash) return;
+    const treemapEl = document.getElementById('map-treemap');
+    const emptyEl    = document.getElementById('map-empty');
+
+    try {
+        const relRes = await apiFetch(`${API}/relations?hash=${hash}`);
+        if (!relRes.ok) throw new Error('Failed to load relations');
+        const { outgoing, incoming } = await relRes.json();
+        const centerMeta = await getObjectMeta(hash);
+        const centerTags = centerMeta.tags || [];
+
+        const edges = [
+            ...outgoing.map(r => ({ neighborHash: r.to,   rel: r.rel, direction: 'out' })),
+            ...incoming.map(r => ({ neighborHash: r.from, rel: r.rel, direction: 'in'  })),
+        ];
+
+        if (edges.length === 0) {
+            mapTiles = [];
+            treemapEl.innerHTML = '';
+            emptyEl.style.display = '';
+            return;
+        }
+        emptyEl.style.display = 'none';
+
+        const neighborHashes = [...new Set(edges.map(e => e.neighborHash))];
+        const neighborData = {};
+        await Promise.all(neighborHashes.map(async (nh) => {
+            const [nMeta, fanOut] = await Promise.all([getObjectMeta(nh), getFanOut(nh)]);
+            const overlap = (nMeta.tags || []).filter(t => centerTags.includes(t)).length;
+            neighborData[nh] = {
+                fanOut,
+                created: nMeta.created ? new Date(nMeta.created) : null,
+                tagOverlap: overlap,
+            };
+        }));
+
+        mapTiles = edges.map(e => {
+            const known = namesByHash[e.neighborHash];
+            const label = known ? known.label : e.neighborHash.slice(0, 8) + '…';
+            return {
+                hash: e.neighborHash,
+                rel: e.rel,
+                direction: e.direction,
+                label,
+                ...neighborData[e.neighborHash],
+            };
+        });
+
+        renderMapTreemap();
+    } catch (err) {
+        showToast('Error', err.message, true);
+    }
+}
+
+function setMapMetric(metric) {
+    mapMetric = metric;
+    ['fanout', 'recency', 'tags'].forEach(m => {
+        document.getElementById('map-metric-' + m).classList.toggle('active', m === metric);
+    });
+    renderMapTreemap();
+}
+
+function weightFor(tile, metric, recencyRange) {
+    if (metric === 'fanout') return tile.fanOut + 1;
+    if (metric === 'tags') return tile.tagOverlap + 1;
+    if (metric === 'recency') {
+        if (!tile.created || !recencyRange || recencyRange.span <= 0) return 1;
+        const age = tile.created.getTime() - recencyRange.min;
+        return (age / recencyRange.span) * 9 + 1;
+    }
+    return 1;
+}
+
+function renderMapTreemap() {
+    const treemapEl = document.getElementById('map-treemap');
+    if (mapTiles.length === 0) return;
+
+    let recencyRange = null;
+    if (mapMetric === 'recency') {
+        const times = mapTiles.filter(t => t.created).map(t => t.created.getTime());
+        if (times.length > 0) {
+            const min = Math.min(...times), max = Math.max(...times);
+            recencyRange = { min, span: max - min };
+        }
+    }
+
+    const weights = mapTiles.map(t => weightFor(t, mapMetric, recencyRange));
+    const rects = computeTreemapLayout(weights, 1000, 1000);
+
+    treemapEl.innerHTML = mapTiles.map((tile, i) => {
+        const r = rects[i];
+        if (!r) return '';
+        const style = `left:${r.x / 10}%; top:${r.y / 10}%; width:${r.w / 10}%; height:${r.h / 10}%;`;
+        const area = r.w * r.h;
+        const fontSize = Math.max(10, Math.min(14, 10 + area / 20000));
+        return `
+            <div class="map-tile map-tile-${tile.direction}" style="${style} font-size:${fontSize}px"
+                 onclick="navigateToHash('${escAttr(tile.hash)}')"
+                 title="${tile.direction === 'out' ? '→' : '←'} ${escHtml(tile.rel)} ${escHtml(tile.label)}">
+                <div class="map-tile-rel">${tile.direction === 'out' ? '→' : '←'} ${escHtml(tile.rel)}</div>
+                <div class="map-tile-label">${escHtml(tile.label)}</div>
+            </div>
+        `;
+    }).join('');
+}
+
+// Squarified treemap layout (Bruls, Huizing & van Wijk, 1999) — identical
+// algorithm to the editor's Map tab, kept in sync deliberately rather than
+// shared via an import, since this is still a single-file-per-page app.
+function computeTreemapLayout(weights, containerW, containerH) {
+    const total = weights.reduce((a, b) => a + b, 0);
+    if (total <= 0 || weights.length === 0) return [];
+
+    const totalArea = containerW * containerH;
+    const items = weights.map((w, i) => ({ area: (w / total) * totalArea, i }));
+    const rects = new Array(items.length);
+
+    let x = 0, y = 0, w = containerW, h = containerH;
+    let remaining = items.slice();
+
+    function worst(row, length) {
+        const sum  = row.reduce((a, b) => a + b.area, 0);
+        const rmax = Math.max(...row.map(r => r.area));
+        const rmin = Math.min(...row.map(r => r.area));
+        const s2 = sum * sum;
+        return Math.max((length * length * rmax) / s2, s2 / (length * length * rmin));
+    }
+
+    function layoutRow(row, length, wide) {
+        const sum = row.reduce((a, b) => a + b.area, 0);
+        const thickness = sum / length;
+        let offset = 0;
+        row.forEach(r => {
+            const itemLength = r.area / thickness;
+            if (wide) {
+                rects[r.i] = { x: x, y: y + offset, w: thickness, h: itemLength };
+            } else {
+                rects[r.i] = { x: x + offset, y: y, w: itemLength, h: thickness };
+            }
+            offset += itemLength;
+        });
+        return thickness;
+    }
+
+    while (remaining.length > 0) {
+        const wide = w >= h;
+        const length = wide ? h : w;
+        let row = [remaining[0]];
+        let i = 1;
+        while (i < remaining.length) {
+            const candidate = row.concat([remaining[i]]);
+            if (worst(candidate, length) <= worst(row, length)) {
+                row = candidate;
+                i++;
+            } else {
+                break;
+            }
+        }
+        const thickness = layoutRow(row, length, wide);
+        if (wide) { x += thickness; w -= thickness; }
+        else      { y += thickness; h -= thickness; }
+        remaining = remaining.slice(row.length);
+        if (w <= 0 || h <= 0) break;
+    }
+
+    return rects;
+}
+
+// Navigate to an object by hash — used by both map tile clicks and any
+// future deep-link handling. Looks up a name in the current namespace
+// first (for a nicer title/eyebrow); falls back to reading it anonymously.
+async function navigateToHash(hash) {
+    const entry = nameList.find(n => n.hash === hash);
+    await openPost(hash, entry ? entry.label : null);
+}
+
+// ── Escaping helpers ──
+function escHtml(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+}
+function escAttr(s) { return escHtml(s).replace(/'/g, '&#39;'); }
+
+// ── Boot ──
+document.addEventListener('DOMContentLoaded', () => {
+    handleMagicLinkCallback().then(updateAuthUI);
+
+    // Deep-link support: ?ns=<namespace>&hash=<hash> opens straight to a
+    // post; ?ns=<namespace> alone opens the picker for that namespace.
+    const params = new URLSearchParams(window.location.search);
+    const nsParam   = params.get('ns');
+    const hashParam = params.get('hash');
+    window.history.replaceState({}, '', window.location.pathname);
+
+    const startNs = nsParam || namespace;
+    if (startNs) {
+        document.getElementById('ns-input').value = startNs;
+        loadNamespace().then(() => {
+            if (hashParam) {
+                const entry = nameList.find(n => n.hash === hashParam);
+                openPost(hashParam, entry ? entry.label : null);
+            }
+        });
+    }
+
+    // Same anti-autofill trick as index.html.
+    document.getElementById('ns-input').name = 'ns-' + Math.random().toString(36).slice(2);
+});
+</script>
+</body>
+</html>
