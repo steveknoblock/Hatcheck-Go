@@ -1113,6 +1113,7 @@
             <div class="status-dot"></div>
             <span id="status-text">ready</span>
         </div>
+        <button class="btn btn-ghost" id="notebook-link-btn" onclick="openNotebook()" style="display:none" title="Open the Notebook app (Deep)">Notebook &rarr;</button>
         <button class="btn-logout" id="logout-btn" onclick="logout()" style="display:none">Sign out</button>
     </div>
 </header>
@@ -1314,6 +1315,22 @@ function updateAuthUI() {
     const loggedIn = !!sessionJWT;
     document.getElementById('login-overlay').classList.toggle('hidden', loggedIn);
     document.getElementById('logout-btn').style.display = loggedIn ? '' : 'none';
+    document.getElementById('notebook-link-btn').style.display = loggedIn ? '' : 'none';
+}
+
+// Deep (the Notebook app) runs on its own origin, so sessionStorage set
+// here isn't visible there — this hands off the already-obtained session
+// JWT and capability token as query params. Deep reads them once on load
+// and stores them in its own origin's sessionStorage; Hatcheck's own auth
+// code is untouched by this.
+const DEEP_URL = 'http://localhost:8091';
+function openNotebook() {
+    if (!sessionJWT) return;
+    const params = new URLSearchParams({
+        session_jwt: sessionJWT,
+        capability_token: browseCapToken,
+    });
+    window.location.href = `${DEEP_URL}/ui/notebook.html?${params.toString()}`;
 }
 
 // apiFetch wraps fetch() to inject auth headers on every request.
