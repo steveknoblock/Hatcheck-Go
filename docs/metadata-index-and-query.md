@@ -1,6 +1,8 @@
 Metadata Indexes
 
-Index data structures have a varying number of fields or properties. This suggests that a single index data type cannot cover all index types. If each index had one map that might be possible. The solutions are 1. pass the index data structure to the index module or define index fields as array elements.
+Index data structures have a varying number of fields or properties. This suggests that a single index data type cannot cover all index types. If each index had one map that might be possible. The solutions are 
+
+1. pass the index data structure to the index module or define index fields as array elements.
 
 There are index map types for different types of relationships.
 

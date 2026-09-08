@@ -1,0 +1,30 @@
+Indexes
+
+{name} --> {hash}
+
+A name is a text string giving a stored object a name.
+
+{kind} --> {hash}
+
+The kind of object the hash stores.
+
+{created} --> {hash}
+
+The date the hash object was created.
+
+{date} --> {hash}
+
+I don't know what this is.
+
+{tag} --> {hash}
+
+A tag name for the object.
+
+
+
+
+
+
+
+{relation} --> {hash}
+
