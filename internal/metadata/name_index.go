@@ -1,66 +1,54 @@
 package metadata
 
 import (
-	"encoding/json"
 	"sort"
 	"strings"
 )
 
 // NameIndex maps labels to their current hash.
+//
+// It is a Projection[string] in Latest mode, keyed by label: a name-create
+// or name-update entry for a label replaces whatever hash it pointed at
+// before. Both ops carry the same payload shape, so one handler serves
+// both.
 type NameIndex struct {
-	data map[string]string // label -> current hash
+	*Projection[string]
 }
 
 func NewNameIndex() *NameIndex {
-	return &NameIndex{
-		data: make(map[string]string),
+	setName := func(e Entry, p NamePayload) []Pair[string] {
+		return []Pair[string]{{Key: p.Label, Value: p.Hash}}
 	}
+
+	return &NameIndex{NewProjection("name", Latest,
+		On(OpNameCreate, setName),
+		On(OpNameUpdate, setName),
+	)}
 }
 
-func (n *NameIndex) Name() string { return "name" }
-
-func (n *NameIndex) Add(entry Entry) {
-	if entry.Op != OpNameCreate && entry.Op != OpNameUpdate {
-		return
-	}
-	if n.data == nil {
-		n.data = make(map[string]string)
-	}
-	// Both create and update payloads have the same shape.
-	var p NamePayload
-	if err := json.Unmarshal(entry.Payload, &p); err != nil {
-		return
-	}
-	n.data[p.Label] = p.Hash
-}
-
-func (n *NameIndex) Query(key string) []string {
-	if hash, ok := n.data[key]; ok {
-		return []string{hash}
-	}
-	return []string{}
-}
+var _ NameLister = (*NameIndex)(nil)
 
 // ListNamespace returns all label/hash pairs whose label starts with prefix,
-// sorted alphabetically (case-insensitively) by (stripped) label. Iterating
-// n.data directly would return entries in Go's randomized map order —
-// sorting here gives callers (the /names endpoint, the UI's name list) a
-// stable order across requests.
+// sorted alphabetically (case-insensitively) by (stripped) label. Scan
+// already returns keys in a fixed order, but that order is raw byte order,
+// so the case-insensitive sort below is what gives callers (the /names
+// endpoint, the UI's name list) the order they actually want.
 func (n *NameIndex) ListNamespace(prefix string) []NameEntry {
 	var results []NameEntry
-	for label, hash := range n.data {
-		if strings.HasPrefix(label, prefix) {
-			results = append(results, NameEntry{
-				Label: strings.TrimPrefix(label, prefix),
-				Hash:  hash,
-			})
-		}
+	for _, kv := range n.Scan(prefix) {
+		hash := kv.Value[len(kv.Value)-1] // Latest mode: exactly one value
+		results = append(results, NameEntry{
+			Label: strings.TrimPrefix(kv.Key, prefix),
+			Hash:  hash,
+		})
 	}
 	// Case-insensitive comparison: Go's plain string < compares raw bytes,
 	// where uppercase ASCII (A-Z) sorts entirely before lowercase (a-z), so
 	// capitalized labels would otherwise cluster together ahead of every
 	// lowercase-starting label regardless of the letters that follow.
-	sort.Slice(results, func(i, j int) bool {
+	// The sort is stable so that labels differing only in case (which tie
+	// here) keep Scan's raw-byte order, making the result deterministic.
+	sort.SliceStable(results, func(i, j int) bool {
 		return strings.ToLower(results[i].Label) < strings.ToLower(results[j].Label)
 	})
 	return results
@@ -72,19 +60,20 @@ func (n *NameIndex) ListNamespace(prefix string) []NameEntry {
 // "/". Labels without a "/" are returned as-is as their own namespace.
 func (n *NameIndex) Namespaces() []string {
 	seen := make(map[string]bool)
-	for label := range n.data {
-		slash := strings.Index(label, "/")
-		if slash >= 0 {
-			seen[label[:slash]] = true
-		} else {
-			seen[label] = true
+	result := make([]string, 0)
+	for _, label := range n.Keys() {
+		ns := label
+		if slash := strings.Index(label, "/"); slash >= 0 {
+			ns = label[:slash]
+		}
+		if !seen[ns] {
+			seen[ns] = true
+			result = append(result, ns)
 		}
 	}
-	result := make([]string, 0, len(seen))
-	for ns := range seen {
-		result = append(result, ns)
-	}
-	sort.Slice(result, func(i, j int) bool {
+	// Stable for the same reason as ListNamespace: namespaces differing
+	// only in case tie, and keep the raw-byte order Keys() gave them.
+	sort.SliceStable(result, func(i, j int) bool {
 		return strings.ToLower(result[i]) < strings.ToLower(result[j])
 	})
 	return result
