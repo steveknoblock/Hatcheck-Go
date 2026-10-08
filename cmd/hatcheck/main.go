@@ -125,7 +125,7 @@ func runStash(args []string, objPath, metaPath string) {
 		os.Exit(1)
 	}
 
-	meta, err := metadata.New(metaPath, &metadata.TagIndex{}, &metadata.DateIndex{}, &metadata.NameIndex{}, &metadata.RelationIndex{})
+	meta, err := metadata.New(metaPath, metadata.DefaultIndexes()...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not load metadata store: %v\n", err)
 	} else {
@@ -182,7 +182,7 @@ func runList(args []string, objPath, metaPath string) {
 		os.Exit(1)
 	}
 
-	meta, err := metadata.New(metaPath, &metadata.TagIndex{}, &metadata.DateIndex{}, &metadata.NameIndex{}, &metadata.RelationIndex{})
+	meta, err := metadata.New(metaPath, metadata.DefaultIndexes()...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not load metadata store: %v\n", err)
 	}
@@ -251,7 +251,7 @@ func runQuery(args []string, metaPath string) {
 		os.Exit(1)
 	}
 
-	meta, err := metadata.New(metaPath, &metadata.TagIndex{}, &metadata.DateIndex{}, &metadata.NameIndex{}, &metadata.RelationIndex{})
+	meta, err := metadata.New(metaPath, metadata.DefaultIndexes()...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: could not load metadata store: %v\n", err)
 		os.Exit(1)
@@ -450,7 +450,7 @@ func runCapabilityIssue(args []string, metaPath string, signingKey []byte) {
 	expires := time.Now().UTC().Add(*ttl)
 	cap := metadata.SignCapability(signingKey, *hash, *perm, *principal, *email, expires)
 
-	meta, err := metadata.New(metaPath, &metadata.TagIndex{}, &metadata.DateIndex{}, &metadata.NameIndex{}, &metadata.RelationIndex{})
+	meta, err := metadata.New(metaPath, metadata.DefaultIndexes()...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: could not load metadata store: %v\n", err)
 		os.Exit(1)
@@ -496,7 +496,7 @@ func runCapabilityRevoke(args []string, metaPath string, signingKey []byte) {
 		os.Exit(1)
 	}
 
-	meta, err := metadata.New(metaPath, &metadata.TagIndex{}, &metadata.DateIndex{}, &metadata.NameIndex{}, &metadata.RelationIndex{})
+	meta, err := metadata.New(metaPath, metadata.DefaultIndexes()...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: could not load metadata store: %v\n", err)
 		os.Exit(1)
@@ -532,7 +532,7 @@ func runCapabilityList(args []string, metaPath string) {
 	}
 	fs.Parse(args)
 
-	meta, err := metadata.New(metaPath, &metadata.TagIndex{}, &metadata.DateIndex{}, &metadata.NameIndex{}, &metadata.RelationIndex{})
+	meta, err := metadata.New(metaPath, metadata.DefaultIndexes()...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: could not load metadata store: %v\n", err)
 		os.Exit(1)
