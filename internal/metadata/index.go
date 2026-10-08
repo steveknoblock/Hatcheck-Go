@@ -76,14 +76,3 @@ type RoleQuerier interface {
 	Roles() []string
 	GrantsForRole(role string) []RoleGrant
 }
-
-// --- Helpers ---
-
-func appendUnique(slice []string, val string) []string {
-	for _, v := range slice {
-		if v == val {
-			return slice
-		}
-	}
-	return append(slice, val)
-}

@@ -1,51 +1,30 @@
 package metadata
 
-import (
-	"encoding/json"
-	"sort"
-)
-
 // DateIndex maps dates (YYYY-MM-DD) to hashes from stash entries.
+//
+// It is a Projection[string] in AppendUnique mode, keyed by the date of the
+// entry's Created timestamp — the key comes from the log entry's envelope
+// rather than its payload.
 type DateIndex struct {
-	data map[string][]string
+	*Projection[string]
 }
 
 func NewDateIndex() *DateIndex {
-	return &DateIndex{
-		data: make(map[string][]string),
-	}
-}
-
-func (d *DateIndex) Name() string { return "date" }
-
-func (d *DateIndex) Add(entry Entry) {
-	if entry.Op != OpStash {
-		return
-	}
-	if d.data == nil {
-		d.data = make(map[string][]string)
-	}
-	var p StashPayload
-	if err := json.Unmarshal(entry.Payload, &p); err != nil {
-		return
-	}
-	date := entry.Created.Format("2006-01-02")
-	d.data[date] = appendUnique(d.data[date], p.Hash)
-}
-
-func (d *DateIndex) Query(key string) []string {
-	return d.data[key]
+	return &DateIndex{NewProjection("date", AppendUnique,
+		On(OpStash, func(e Entry, p StashPayload) []Pair[string] {
+			return []Pair[string]{{Key: e.Created.Format("2006-01-02"), Value: p.Hash}}
+		}),
+	)}
 }
 
 // Dates returns every date that has at least one stash entry, sorted
-// most-recent-first — unlike TagIndex.Tags (unordered), chronological
-// order is the whole point of browsing by date, so this sorts rather than
-// just ranging over the map.
+// most-recent-first — unlike TagIndex.Tags (alphabetical), chronological
+// order is the whole point of browsing by date. YYYY-MM-DD sorts
+// chronologically as a plain string, so this is Keys() reversed.
 func (d *DateIndex) Dates() []string {
-	result := make([]string, 0, len(d.data))
-	for date := range d.data {
-		result = append(result, date)
+	dates := d.Keys()
+	for i, j := 0, len(dates)-1; i < j; i, j = i+1, j-1 {
+		dates[i], dates[j] = dates[j], dates[i]
 	}
-	sort.Sort(sort.Reverse(sort.StringSlice(result)))
-	return result
+	return dates
 }
