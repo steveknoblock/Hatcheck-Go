@@ -4,163 +4,193 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"flag"
 	"fmt"
-	"io"
-	"log"
-	"net/http"
 	"os"
 	"time"
 
-	"github.com/steveknoblock/hatcheck-go/internal/auth"
 	"github.com/steveknoblock/hatcheck-go/internal/cas"
 	"github.com/steveknoblock/hatcheck-go/internal/metadata"
 	"github.com/steveknoblock/hatcheck-go/internal/share"
 )
 
-// Perm constants define the operations a capability may authorize.
-const (
-	PermRead  = "read"
-	PermWrite = "write"
-	PermAdmin = "admin"
-)
+const usage = `Hatcheck - Content Addressable Store
 
-// resolveEmail returns email if non-empty, otherwise backfills it from the
-// principal's own capability history. RequireAuth only populates Email when
-// Stytch's session validation takes its remote path (see
-// internal/auth.ValidateSessionJWT) — the fast local-JWT path it uses for
-// most requests has no user record to read email from, so most
-// write-capability issuance would otherwise carry no email at all even
-// though the same principal's login-issued read capability does (login
-// always calls Stytch's remote AuthenticateMagicLink). Email carries no
-// authority here regardless — this is purely a display-field backfill and
-// changes nothing about who is allowed to do what.
-func resolveEmail(meta *metadata.Store, principal, email string) string {
-	if email != "" || principal == "" {
-		return email
-	}
-	caps := meta.CapabilitiesForPrincipal(principal)
-	for i := len(caps) - 1; i >= 0; i-- {
-		if caps[i].Email != "" {
-			return caps[i].Email
-		}
-	}
-	return ""
+Usage:
+  hatcheck <command> [options]
+
+Commands:
+  stash            Store content in the CAS
+  fetch            Retrieve content by hash
+  list             List all objects in the store
+  query            Query objects by index and key
+  export           Export objects and metadata to a shareable archive
+  export-markdown  Export a namespace as a directory of markdown files
+  import           Import objects and metadata from an archive
+  capability       Manage capabilities (issue, revoke, list)
+
+Options:
+  -data     Path to objects directory (default: ./objects)
+  -meta     Path to metadata directory (default: ./metadata)
+
+Run 'hatcheck <command> -help' for command-specific options.
+`
+
+// newStore creates a CAS store using SHA-256, matching the hash function
+// server/main.go initialises the HTTP server's store with — the CLI and
+// server must agree on this, since they operate on the same object store.
+func newStore(objPath string) (*cas.Store, error) {
+	return cas.New(objPath, func(content string) string {
+		sum := sha256.Sum256([]byte(content))
+		return hex.EncodeToString(sum[:])
+	})
 }
 
-// stashAndIssue stores content in the CAS, records it in the metadata log,
-// issues a bound write capability for the resulting hash tied to the
-// creating principal, and returns both the hash and the capability.
-// It is the single point of ownership establishment for all creation operations.
-func stashAndIssue(
-	store *cas.Store,
-	meta *metadata.Store,
-	key []byte,
-	content string,
-	principal string,
-	email string,
-	expiry time.Duration,
-	appendMeta func(hash string) error,
-) (string, metadata.CapabilityPayload, error) {
+func main() {
+	if len(os.Args) < 2 {
+		fmt.Fprint(os.Stderr, usage)
+		os.Exit(1)
+	}
+
+	objPath := os.Getenv("HATCHECK_DATA")
+	if objPath == "" {
+		objPath = "./objects"
+	}
+	metaPath := os.Getenv("HATCHECK_META")
+	if metaPath == "" {
+		metaPath = "./metadata"
+	}
+
+	switch os.Args[1] {
+	case "stash":
+		runStash(os.Args[2:], objPath, metaPath)
+	case "fetch":
+		runFetch(os.Args[2:], objPath)
+	case "list":
+		runList(os.Args[2:], objPath, metaPath)
+	case "query":
+		runQuery(os.Args[2:], metaPath)
+	case "export":
+		runExport(os.Args[2:], objPath, metaPath)
+	case "export-markdown":
+		runExportMarkdown(os.Args[2:], objPath, metaPath)
+	case "import":
+		runImport(os.Args[2:], objPath, metaPath)
+	case "capability":
+		runCapability(os.Args[2:], metaPath)
+	default:
+		fmt.Fprintf(os.Stderr, "unknown command: %s\n\n", os.Args[1])
+		fmt.Fprint(os.Stderr, usage)
+		os.Exit(1)
+	}
+}
+
+// --- stash ---
+
+func runStash(args []string, objPath, metaPath string) {
+	fs := flag.NewFlagSet("stash", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: hatcheck stash <content>")
+		fmt.Fprintln(os.Stderr, "       echo 'content' | hatcheck stash")
+		fs.PrintDefaults()
+	}
+	fs.Parse(args)
+
+	var content string
+	if fs.NArg() > 0 {
+		content = fs.Arg(0)
+	} else {
+		buf, err := os.ReadFile("/dev/stdin")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error reading stdin: %v\n", err)
+			os.Exit(1)
+		}
+		content = string(buf)
+	}
+
+	if content == "" {
+		fmt.Fprintln(os.Stderr, "error: no content provided")
+		os.Exit(1)
+	}
+
+	store, err := newStore(objPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: could not open object store: %v\n", err)
+		os.Exit(1)
+	}
+
 	hash, err := store.Stash(content)
 	if err != nil {
-		return "", metadata.CapabilityPayload{}, fmt.Errorf("failed to stash content: %w", err)
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
 	}
 
-	if err := appendMeta(hash); err != nil {
-		log.Printf("warning: failed to append metadata for %s: %v", hash, err)
-	}
-
-	email = resolveEmail(meta, principal, email)
-
-	expires := time.Now().UTC().Add(expiry)
-	cap := metadata.SignCapability(key, hash, PermWrite, principal, email, expires)
-	if err := meta.AppendCapability(cap); err != nil {
-		log.Printf("warning: failed to record capability for %s: %v", hash, err)
-	}
-
-	return hash, cap, nil
-}
-
-// stashResponse is the JSON shape returned by all creation endpoints.
-type stashResponse struct {
-	Hash       string                     `json:"hash"`
-	Capability metadata.CapabilityPayload `json:"capability"`
-}
-
-func stashHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, key []byte, cfg Config, vr VerifiedRequest) {
-	if req.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	body, err := io.ReadAll(req.Body)
+	meta, err := metadata.New(metaPath, metadata.DefaultIndexes()...)
 	if err != nil {
-		http.Error(w, "failed to read request body", http.StatusBadRequest)
-		return
-	}
-	defer req.Body.Close()
-
-	content := string(body)
-
-	hash, cap, err := stashAndIssue(store, meta, key, content, vr.Principal, vr.Email, cfg.CapabilityExpiry,
-		func(hash string) error {
-			return meta.AppendStash(hash, len(body), content)
-		},
-	)
-	if err != nil {
-		log.Printf("stash error: %v", err)
-		http.Error(w, "failed to stash content", http.StatusInternalServerError)
-		return
+		fmt.Fprintf(os.Stderr, "warning: could not load metadata store: %v\n", err)
+	} else {
+		meta.AppendStash(hash, len(content), content)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(stashResponse{Hash: hash, Capability: cap})
+	fmt.Println(hash)
 }
 
-func fetchHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, vr VerifiedRequest) {
-	if req.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+// --- fetch ---
+
+func runFetch(args []string, objPath string) {
+	fs := flag.NewFlagSet("fetch", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: hatcheck fetch <hash>")
+		fs.PrintDefaults()
+	}
+	fs.Parse(args)
+
+	if fs.NArg() < 1 {
+		fs.Usage()
+		os.Exit(1)
 	}
 
-	hash := req.URL.Query().Get("hash")
-	if hash == "" {
-		http.Error(w, "missing hash parameter", http.StatusBadRequest)
-		return
-	}
-
-	// Verify the capability covers the requested hash.
-	// A wildcard hash "*" grants access to all objects.
-	if vr.Capability.Hash != "*" && vr.Capability.Hash != hash {
-		http.Error(w, "capability does not cover this object", http.StatusForbidden)
-		return
-	}
-
-	data, err := store.Fetch(hash)
+	store, err := newStore(objPath)
 	if err != nil {
-		http.Error(w, "content not found", http.StatusNotFound)
-		return
+		fmt.Fprintf(os.Stderr, "error: could not open object store: %v\n", err)
+		os.Exit(1)
 	}
 
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "%s\n", data)
+	data, err := store.Fetch(fs.Arg(0))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Print(data)
 }
 
-func listHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, vr VerifiedRequest) {
-	if req.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+// --- list ---
+
+func runList(args []string, objPath, metaPath string) {
+	fs := flag.NewFlagSet("list", flag.ExitOnError)
+	jsonOut := fs.Bool("json", false, "Output as JSON")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: hatcheck list [-json]")
+		fs.PrintDefaults()
+	}
+	fs.Parse(args)
+
+	store, err := newStore(objPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: could not open object store: %v\n", err)
+		os.Exit(1)
+	}
+
+	meta, err := metadata.New(metaPath, metadata.DefaultIndexes()...)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not load metadata store: %v\n", err)
 	}
 
 	hashes, err := store.List()
 	if err != nil {
-		http.Error(w, "failed to list objects", http.StatusInternalServerError)
-		return
-	}
-
-	if hashes == nil {
-		hashes = []string{}
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
 	}
 
 	type hashWithTags struct {
@@ -168,535 +198,417 @@ func listHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, met
 		Tags []string `json:"tags"`
 	}
 
-	result := make([]hashWithTags, len(hashes))
+	results := make([]hashWithTags, len(hashes))
 	for i, hash := range hashes {
-		result[i] = hashWithTags{
-			Hash: hash,
-			Tags: meta.TagsForHash(hash),
+		var tags []string
+		if meta != nil {
+			tags = meta.TagsForHash(hash)
 		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
-}
-
-func queryHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, vr VerifiedRequest) {
-	if req.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	indexName := req.URL.Query().Get("index")
-	key := req.URL.Query().Get("key")
-
-	if indexName == "" || key == "" {
-		http.Error(w, "missing index or key parameter", http.StatusBadRequest)
-		return
-	}
-
-	hashes := meta.Query(indexName, key)
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(hashes)
-}
-
-// namespacesHandler returns all unique namespace prefixes in the name index.
-// GET /namespaces
-func namespacesHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, vr VerifiedRequest) {
-	if req.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	namespaces := meta.Namespaces()
-	if namespaces == nil {
-		namespaces = []string{}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(namespaces)
-}
-
-// namesHandler returns all Names in a namespace with the prefix stripped.
-// GET /names?namespace=bob
-func namesHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, vr VerifiedRequest) {
-	if req.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	namespace := req.URL.Query().Get("namespace")
-	if namespace == "" {
-		http.Error(w, "missing namespace parameter", http.StatusBadRequest)
-		return
-	}
-
-	names := meta.NamesInNamespace(namespace)
-
-	// Enrich each entry with its target's kind (stash/collection/relation)
-	// so the client can tell what a name points to — e.g. show a
-	// Collection with a different icon than a plain document — without
-	// fetching and parsing every single one's content just to find out.
-	type nameWithKind struct {
-		Label string `json:"label"`
-		Hash  string `json:"hash"`
-		Kind  string `json:"kind,omitempty"`
-	}
-	result := make([]nameWithKind, len(names))
-	for i, n := range names {
-		result[i] = nameWithKind{
-			Label: n.Label,
-			Hash:  n.Hash,
-			Kind:  meta.KindOf(n.Hash),
+		if tags == nil {
+			tags = []string{}
 		}
+		results[i] = hashWithTags{Hash: hash, Tags: tags}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
-}
-
-// nameHandler creates or updates a Name in the metadata store.
-// POST /name?label=my-document&hash=a1b2c3&namespace=bob
-func nameHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, vr VerifiedRequest) {
-	if req.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	if *jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(results)
 		return
 	}
 
-	namespace := req.URL.Query().Get("namespace")
-	label := req.URL.Query().Get("label")
-	hash := req.URL.Query().Get("hash")
-
-	if namespace == "" || label == "" || hash == "" {
-		http.Error(w, "missing namespace, label, or hash parameter", http.StatusBadRequest)
+	if len(results) == 0 {
+		fmt.Println("No objects in store.")
 		return
 	}
-
-	// Verify the capability covers the named hash.
-	// A wildcard hash "*" grants access to all objects.
-	if vr.Capability.Hash != "*" && vr.Capability.Hash != hash {
-		http.Error(w, "capability does not cover this object", http.StatusForbidden)
-		return
-	}
-
-	fullLabel := namespace + "/" + label
-
-	// Try to create the name. If it already exists, update it instead.
-	err := meta.AppendNameCreate(fullLabel, hash)
-	if err != nil {
-		err = meta.AppendNameUpdate(fullLabel, hash)
-	}
-	if err != nil {
-		http.Error(w, "failed to record name: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "%s -> %s\n", fullLabel, hash)
-}
-
-// collectionHandler stores a JSON array of hashes as a CAS object,
-// records it in metadata, issues a write capability, and returns both.
-// POST /collection — body is a JSON array of hashes
-func collectionHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, key []byte, cfg Config, vr VerifiedRequest) {
-	if req.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	body, err := io.ReadAll(req.Body)
-	if err != nil {
-		http.Error(w, "failed to read request body", http.StatusBadRequest)
-		return
-	}
-	defer req.Body.Close()
-
-	var hashes []string
-	if err := json.Unmarshal(body, &hashes); err != nil {
-		http.Error(w, "body must be a JSON array of hash strings", http.StatusBadRequest)
-		return
-	}
-
-	content := string(body)
-
-	hash, cap, err := stashAndIssue(store, meta, key, content, vr.Principal, vr.Email, cfg.CapabilityExpiry,
-		func(hash string) error {
-			return meta.AppendCollection(hash, hashes)
-		},
-	)
-	if err != nil {
-		log.Printf("collection error: %v", err)
-		http.Error(w, "failed to store collection", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(stashResponse{Hash: hash, Capability: cap})
-}
-
-// relationHandler stores a typed link between two hashes as a CAS object,
-// records it in metadata, issues a write capability, and returns both.
-// POST /relation — body is JSON {"from":"<hash>","rel":"<type>","to":"<hash>"}
-func relationHandler(w http.ResponseWriter, req *http.Request, store *cas.Store, meta *metadata.Store, key []byte, cfg Config, vr VerifiedRequest) {
-	if req.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	body, err := io.ReadAll(req.Body)
-	if err != nil {
-		http.Error(w, "failed to read request body", http.StatusBadRequest)
-		return
-	}
-	defer req.Body.Close()
-
-	var rel metadata.RelationPayload
-	if err := json.Unmarshal(body, &rel); err != nil {
-		http.Error(w, `body must be JSON: {"from":"<hash>","rel":"<type>","to":"<hash>"}`, http.StatusBadRequest)
-		return
-	}
-
-	if rel.From == "" || rel.Rel == "" || rel.To == "" {
-		http.Error(w, "from, rel, and to are all required", http.StatusBadRequest)
-		return
-	}
-
-	content := string(body)
-
-	hash, cap, err := stashAndIssue(store, meta, key, content, vr.Principal, vr.Email, cfg.CapabilityExpiry,
-		func(hash string) error {
-			return meta.AppendRelation(hash, rel.From, rel.Rel, rel.To)
-		},
-	)
-	if err != nil {
-		log.Printf("relation error: %v", err)
-		http.Error(w, "failed to store relation", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(stashResponse{Hash: hash, Capability: cap})
-}
-
-// relationsHandler returns all relations for the given hash.
-// GET /relations?hash=<hash>
-func relationsHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, vr VerifiedRequest) {
-	if req.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	hash := req.URL.Query().Get("hash")
-	if hash == "" {
-		http.Error(w, "missing hash parameter", http.StatusBadRequest)
-		return
-	}
-
-	outgoing, incoming := meta.RelationsForHash(hash)
-
-	if outgoing == nil {
-		outgoing = []metadata.RelationPayload{}
-	}
-	if incoming == nil {
-		incoming = []metadata.RelationPayload{}
-	}
-
-	type relationsResponse struct {
-		Outgoing []metadata.RelationPayload `json:"outgoing"`
-		Incoming []metadata.RelationPayload `json:"incoming"`
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(relationsResponse{
-		Outgoing: outgoing,
-		Incoming: incoming,
-	})
-}
-
-// objectMetaHandler returns per-hash metadata not otherwise available in a
-// single call: tags, creation timestamp, and kind. Added for the relations
-// treemap, which needs this for every direct neighbor of whatever object
-// is currently open — bundling it into one endpoint avoids three separate
-// round trips (tags, /query?index=created, /query?index=kind) per neighbor.
-// GET /object-meta?hash=<hash>
-func objectMetaHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, vr VerifiedRequest) {
-	if req.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	hash := req.URL.Query().Get("hash")
-	if hash == "" {
-		http.Error(w, "missing hash parameter", http.StatusBadRequest)
-		return
-	}
-
-	tags := meta.TagsForHash(hash)
-	if tags == nil {
-		tags = []string{}
-	}
-
-	type objectMetaResponse struct {
-		Tags    []string  `json:"tags"`
-		Created time.Time `json:"created"`
-		Kind    string    `json:"kind"`
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(objectMetaResponse{
-		Tags:    tags,
-		Created: meta.CreatedAt(hash),
-		Kind:    meta.KindOf(hash),
-	})
-}
-
-// tagsHandler returns all known tag keys from the tag index.
-// GET /tags
-func tagsHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, vr VerifiedRequest) {
-	if req.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	tags := meta.AllTags()
-	if tags == nil {
-		tags = []string{}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(tags)
-}
-
-// datesHandler returns all dates that have at least one stash entry,
-// most-recent-first. Used to populate the date-browsing view in the UI —
-// selecting one of these dates and querying /query?index=date&key=<date>
-// is how content gets found by when it was stashed rather than by name.
-// GET /dates
-func datesHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, vr VerifiedRequest) {
-	if req.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	dates := meta.AllDates()
-	if dates == nil {
-		dates = []string{}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(dates)
-}
-
-// exportHandler streams a tar.gz archive to the client.
-// GET /export?source=bob
-// GET /export?source=bob&name=my-document
-// GET /export?source=bob&namespace=bob
-// name and namespace are mutually exclusive; specifying both is an error.
-func exportHandler(w http.ResponseWriter, req *http.Request, objPath, metaPath string, vr VerifiedRequest) {
-	if req.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	source := req.URL.Query().Get("source")
-	name := req.URL.Query().Get("name")
-	namespace := req.URL.Query().Get("namespace")
-
-	if source == "" {
-		http.Error(w, "missing source parameter", http.StatusBadRequest)
-		return
-	}
-	if name != "" && namespace != "" {
-		http.Error(w, "name and namespace are mutually exclusive", http.StatusBadRequest)
-		return
-	}
-
-	tmp, err := os.CreateTemp("", "hatcheck-export-*.tar.gz")
-	if err != nil {
-		http.Error(w, "failed to create temp file", http.StatusInternalServerError)
-		return
-	}
-	defer os.Remove(tmp.Name())
-	tmp.Close()
-
-	if err := share.Export(objPath, metaPath, source, name, namespace, tmp.Name()); err != nil {
-		http.Error(w, "export failed: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	filename := source + ".tar.gz"
-	w.Header().Set("Content-Type", "application/gzip")
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
-	http.ServeFile(w, req, tmp.Name())
-}
-
-// importHandler accepts a tar.gz archive as the request body and imports it.
-// POST /import
-func importHandler(w http.ResponseWriter, req *http.Request, objPath, metaPath string, vr VerifiedRequest) {
-	if req.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	tmp, err := os.CreateTemp("", "hatcheck-import-*.tar.gz")
-	if err != nil {
-		http.Error(w, "failed to create temp file", http.StatusInternalServerError)
-		return
-	}
-	defer os.Remove(tmp.Name())
-
-	if _, err := io.Copy(tmp, req.Body); err != nil {
-		tmp.Close()
-		http.Error(w, "failed to read upload", http.StatusBadRequest)
-		return
-	}
-	tmp.Close()
-
-	if err := share.Import(tmp.Name(), objPath, metaPath); err != nil {
-		http.Error(w, "import failed: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintln(w, "import successful")
-}
-
-// issueHandler creates and signs a new capability for the given principal,
-// records it in the log, and returns the serialized CapabilityPayload to the
-// caller. Only principals with PermAdmin may issue capabilities.
-// POST /capability?hash=<hash>&perm=<perm>&principal=<principal>&expires=<RFC3339>
-func issueHandler(w http.ResponseWriter, req *http.Request, key []byte, meta *metadata.Store, vr VerifiedRequest) {
-	if req.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	hash := req.URL.Query().Get("hash")
-	perm := req.URL.Query().Get("perm")
-	principal := req.URL.Query().Get("principal")
-	expiresStr := req.URL.Query().Get("expires")
-	email := req.URL.Query().Get("email") // optional — empty if user has not opted in
-
-	if hash == "" || perm == "" || principal == "" || expiresStr == "" {
-		http.Error(w, "missing required parameter: hash, perm, principal, expires", http.StatusBadRequest)
-		return
-	}
-
-	// Validate perm is a known value.
-	// Admin capabilities can only be issued via the bootstrap token (no
-	// capability present in the request). Regular issuance is limited to
-	// read or write to prevent privilege escalation.
-	if perm != PermRead && perm != PermWrite {
-		if perm == PermAdmin && vr.Capability.ID == "" {
-			// Bootstrap path — admin issuance permitted.
+	for _, r := range results {
+		if len(r.Tags) > 0 {
+			fmt.Printf("%s  %v\n", r.Hash, r.Tags)
 		} else {
-			http.Error(w, "perm must be read or write", http.StatusBadRequest)
-			return
+			fmt.Println(r.Hash)
 		}
 	}
+}
 
-	expires, err := time.Parse(time.RFC3339, expiresStr)
+// --- query ---
+
+func runQuery(args []string, metaPath string) {
+	fs := flag.NewFlagSet("query", flag.ExitOnError)
+	indexName := fs.String("index", "tag", "Index to query (tag, date)")
+	key := fs.String("key", "", "Key to look up in the index")
+	jsonOut := fs.Bool("json", false, "Output as JSON")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: hatcheck query -index <name> -key <value> [-json]")
+		fmt.Fprintln(os.Stderr, "Examples:")
+		fmt.Fprintln(os.Stderr, "  hatcheck query -index tag -key ideas")
+		fmt.Fprintln(os.Stderr, "  hatcheck query -index date -key 2026-03-14")
+		fs.PrintDefaults()
+	}
+	fs.Parse(args)
+
+	if *key == "" {
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	meta, err := metadata.New(metaPath, metadata.DefaultIndexes()...)
 	if err != nil {
-		http.Error(w, "expires must be in RFC3339 format", http.StatusBadRequest)
+		fmt.Fprintf(os.Stderr, "error: could not load metadata store: %v\n", err)
+		os.Exit(1)
+	}
+
+	hashes := meta.Query(*indexName, *key)
+
+	if *jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(hashes)
 		return
 	}
 
-	if expires.Before(time.Now().UTC()) {
-		http.Error(w, "expires must be in the future", http.StatusBadRequest)
+	if len(hashes) == 0 {
+		fmt.Printf("No objects found for %s=%s\n", *indexName, *key)
 		return
 	}
+	for _, h := range hashes {
+		fmt.Println(h)
+	}
+}
 
-	cap := metadata.SignCapability(key, hash, perm, principal, email, expires)
+// --- export ---
 
+func runExport(args []string, objPath, metaPath string) {
+	fs := flag.NewFlagSet("export", flag.ExitOnError)
+	source := fs.String("source", "", "Source identifier (required)")
+	name := fs.String("name", "", "Export only objects reachable from this name (optional)")
+	namespace := fs.String("namespace", "", "Export only objects reachable from names in this namespace (optional)")
+	outFile := fs.String("o", "", "Output file (default: <source>.tar.gz)")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: hatcheck export -source <name> [-o <file>]")
+		fmt.Fprintln(os.Stderr, "Examples:")
+		fmt.Fprintln(os.Stderr, "  hatcheck export -source bob")
+		fmt.Fprintln(os.Stderr, "  hatcheck export -source bob -name my-document")
+		fmt.Fprintln(os.Stderr, "  hatcheck export -source bob -namespace bob")
+		fmt.Fprintln(os.Stderr, "  hatcheck export -source bob -o my-export.tar.gz")
+		fs.PrintDefaults()
+	}
+	fs.Parse(args)
+
+	if *source == "" {
+		fmt.Fprintln(os.Stderr, "error: -source is required")
+		fs.Usage()
+		os.Exit(1)
+	}
+	if *name != "" && *namespace != "" {
+		fmt.Fprintln(os.Stderr, "error: -name and -namespace are mutually exclusive")
+		os.Exit(1)
+	}
+
+	if err := share.Export(objPath, metaPath, *source, *name, *namespace, *outFile); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	outPath := *outFile
+	if outPath == "" {
+		outPath = *source + ".tar.gz"
+	}
+	fmt.Printf("exported to %s\n", outPath)
+}
+
+// --- export-markdown ---
+
+func runExportMarkdown(args []string, objPath, metaPath string) {
+	fs := flag.NewFlagSet("export-markdown", flag.ExitOnError)
+	namespace := fs.String("namespace", "", "Namespace to export (required)")
+	outDir := fs.String("o", "", "Output directory (default: ./<namespace>)")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: hatcheck export-markdown -namespace <namespace> [-o <dir>]")
+		fmt.Fprintln(os.Stderr, "Renders every name in the namespace as markdown: a leaf becomes a")
+		fmt.Fprintln(os.Stderr, "<slug>.md file, a Collection becomes a <slug>/ directory with an")
+		fmt.Fprintln(os.Stderr, "_index.md — suitable as a Hugo content directory.")
+		fmt.Fprintln(os.Stderr, "Examples:")
+		fmt.Fprintln(os.Stderr, "  hatcheck export-markdown -namespace bob")
+		fmt.Fprintln(os.Stderr, "  hatcheck export-markdown -namespace bob -o ./content")
+		fs.PrintDefaults()
+	}
+	fs.Parse(args)
+
+	if *namespace == "" {
+		fmt.Fprintln(os.Stderr, "error: -namespace is required")
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	dest := *outDir
+	if dest == "" {
+		dest = "./" + *namespace
+	}
+
+	if err := share.ExportMarkdown(objPath, metaPath, *namespace, dest); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("exported to %s\n", dest)
+}
+
+// --- import ---
+
+func runImport(args []string, objPath, metaPath string) {
+	fs := flag.NewFlagSet("import", flag.ExitOnError)
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: hatcheck import <archive>")
+		fmt.Fprintln(os.Stderr, "Examples:")
+		fmt.Fprintln(os.Stderr, "  hatcheck import bob.tar.gz")
+		fs.PrintDefaults()
+	}
+	fs.Parse(args)
+
+	if fs.NArg() < 1 {
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	if err := share.Import(fs.Arg(0), objPath, metaPath); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("imported from %s\n", fs.Arg(0))
+}
+
+// --- capability ---
+
+const capabilityUsage = `Usage: hatcheck capability <subcommand> [options]
+
+Subcommands:
+  issue   Issue a new signed capability for a principal
+  revoke  Revoke a capability by ID
+  list    List capabilities recorded in the log
+
+Requires HATCHECK_SIGNING_KEY to be set in the environment.
+`
+
+func runCapability(args []string, metaPath string) {
+	if len(args) < 1 {
+		fmt.Fprint(os.Stderr, capabilityUsage)
+		os.Exit(1)
+	}
+
+	signingKey := []byte(os.Getenv("HATCHECK_SIGNING_KEY"))
+	if len(signingKey) == 0 {
+		fmt.Fprintln(os.Stderr, "error: HATCHECK_SIGNING_KEY environment variable must be set")
+		os.Exit(1)
+	}
+
+	switch args[0] {
+	case "issue":
+		runCapabilityIssue(args[1:], metaPath, signingKey)
+	case "revoke":
+		runCapabilityRevoke(args[1:], metaPath, signingKey)
+	case "list":
+		runCapabilityList(args[1:], metaPath)
+	default:
+		fmt.Fprintf(os.Stderr, "unknown subcommand: %s\n\n", args[0])
+		fmt.Fprint(os.Stderr, capabilityUsage)
+		os.Exit(1)
+	}
+}
+
+// --- capability issue ---
+
+func runCapabilityIssue(args []string, metaPath string, signingKey []byte) {
+	fs := flag.NewFlagSet("capability issue", flag.ExitOnError)
+	hash := fs.String("hash", "", "Object hash to grant access to (required)")
+	perm := fs.String("perm", "", "Permission to grant: read or write (required)")
+	principal := fs.String("principal", "", "User ID to grant the capability to (required)")
+	email := fs.String("email", "", "Email address for display (optional, requires user opt-in)")
+	ttl := fs.Duration("ttl", 24*time.Hour, "How long the capability is valid (e.g. 24h, 7*24h)")
+	jsonOut := fs.Bool("json", false, "Output the full capability payload as JSON")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: hatcheck capability issue -hash <hash> -perm <read|write> -principal <user-id> [-email <email>] [-ttl <duration>] [-json]")
+		fmt.Fprintln(os.Stderr, "Examples:")
+		fmt.Fprintln(os.Stderr, "  hatcheck capability issue -hash abc123 -perm read -principal alice")
+		fmt.Fprintln(os.Stderr, "  hatcheck capability issue -hash abc123 -perm read -principal alice -email alice@example.com")
+		fmt.Fprintln(os.Stderr, "  hatcheck capability issue -hash abc123 -perm write -principal bob -ttl 168h")
+		fs.PrintDefaults()
+	}
+	fs.Parse(args)
+
+	if *hash == "" || *perm == "" || *principal == "" {
+		fmt.Fprintln(os.Stderr, "error: -hash, -perm, and -principal are required")
+		fs.Usage()
+		os.Exit(1)
+	}
+	if *perm != "read" && *perm != "write" {
+		fmt.Fprintln(os.Stderr, "error: -perm must be read or write")
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	expires := time.Now().UTC().Add(*ttl)
+	cap := metadata.SignCapability(signingKey, *hash, *perm, *principal, *email, expires)
+
+	meta, err := metadata.New(metaPath, metadata.DefaultIndexes()...)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: could not load metadata store: %v\n", err)
+		os.Exit(1)
+	}
 	if err := meta.AppendCapability(cap); err != nil {
-		http.Error(w, "failed to record capability: "+err.Error(), http.StatusInternalServerError)
+		fmt.Fprintf(os.Stderr, "error: could not record capability: %v\n", err)
+		os.Exit(1)
+	}
+
+	if *jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(cap)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(cap)
+	fmt.Printf("capability issued\n")
+	fmt.Printf("  id:        %s\n", cap.ID)
+	fmt.Printf("  hash:      %s\n", cap.Hash)
+	fmt.Printf("  perm:      %s\n", cap.Perm)
+	fmt.Printf("  principal: %s\n", cap.Principal)
+	fmt.Printf("  expires:   %s\n", cap.Expires.Format(time.RFC3339))
 }
 
-// revokeHandler records the revocation of a capability and updates the live
-// revocation index. The capability ID is required; reason is optional.
-// POST /capability/revoke?id=<capability-id>&reason=<reason>
-func revokeHandler(w http.ResponseWriter, req *http.Request, meta *metadata.Store, revoked *metadata.RevokedSet, vr VerifiedRequest) {
-	if req.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
+// --- capability revoke ---
+
+func runCapabilityRevoke(args []string, metaPath string, signingKey []byte) {
+	fs := flag.NewFlagSet("capability revoke", flag.ExitOnError)
+	id := fs.String("id", "", "Capability ID to revoke (required)")
+	reason := fs.String("reason", "", "Reason for revocation (optional)")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: hatcheck capability revoke -id <capability-id> [-reason <text>]")
+		fmt.Fprintln(os.Stderr, "Examples:")
+		fmt.Fprintln(os.Stderr, "  hatcheck capability revoke -id abc123")
+		fmt.Fprintln(os.Stderr, "  hatcheck capability revoke -id abc123 -reason \"user offboarded\"")
+		fs.PrintDefaults()
+	}
+	fs.Parse(args)
+
+	if *id == "" {
+		fmt.Fprintln(os.Stderr, "error: -id is required")
+		fs.Usage()
+		os.Exit(1)
 	}
 
-	id := req.URL.Query().Get("id")
-	if id == "" {
-		http.Error(w, "missing id parameter", http.StatusBadRequest)
-		return
+	meta, err := metadata.New(metaPath, metadata.DefaultIndexes()...)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: could not load metadata store: %v\n", err)
+		os.Exit(1)
 	}
 
-	reason := req.URL.Query().Get("reason")
-
-	if err := meta.AppendCapabilityRevoke(id, reason, revoked); err != nil {
-		http.Error(w, "failed to record revocation: "+err.Error(), http.StatusInternalServerError)
-		return
+	// The CLI operates directly on the store so no live RevokedSet is needed —
+	// pass a fresh one that is discarded after the call.
+	if err := meta.AppendCapabilityRevoke(*id, *reason, metadata.NewRevokedSet()); err != nil {
+		fmt.Fprintf(os.Stderr, "error: could not record revocation: %v\n", err)
+		os.Exit(1)
 	}
 
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "capability %s revoked\n", id)
+	fmt.Printf("capability %s revoked\n", *id)
+	if *reason != "" {
+		fmt.Printf("  reason: %s\n", *reason)
+	}
 }
 
-func main() {
-	cfg := LoadConfig()
+// --- capability list ---
 
-	// Initialise the CAS with a SHA-256 hash function.
-	store, err := cas.New(cfg.ObjPath, func(content string) string {
-		sum := sha256.Sum256([]byte(content))
-		return hex.EncodeToString(sum[:])
-	})
+func runCapabilityList(args []string, metaPath string) {
+	fs := flag.NewFlagSet("capability list", flag.ExitOnError)
+	principal := fs.String("principal", "", "Filter by principal (optional)")
+	hash := fs.String("hash", "", "Filter by object hash (optional)")
+	jsonOut := fs.Bool("json", false, "Output as JSON")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: hatcheck capability list [-principal <user-id>] [-hash <hash>] [-json]")
+		fmt.Fprintln(os.Stderr, "Examples:")
+		fmt.Fprintln(os.Stderr, "  hatcheck capability list")
+		fmt.Fprintln(os.Stderr, "  hatcheck capability list -principal alice")
+		fmt.Fprintln(os.Stderr, "  hatcheck capability list -hash abc123")
+		fs.PrintDefaults()
+	}
+	fs.Parse(args)
+
+	meta, err := metadata.New(metaPath, metadata.DefaultIndexes()...)
 	if err != nil {
-		log.Fatalf("failed to initialise object store: %v", err)
+		fmt.Fprintf(os.Stderr, "error: could not load metadata store: %v\n", err)
+		os.Exit(1)
 	}
 
-	meta, err := metadata.New(cfg.MetaPath,
-		metadata.NewTagIndex(),
-		metadata.NewDateIndex(),
-		metadata.NewNameIndex(),
-		metadata.NewRelationIndex(),
-		metadata.NewCapabilityIndex(),
-		metadata.NewRoleIndex(),
-		metadata.NewKindIndex(),
-		metadata.NewCreatedIndex(),
-	)
-	if err != nil {
-		log.Fatalf("failed to load metadata store: %v", err)
-	}
-
-	// Build revocation index from log at startup.
+	// Build revoked set for status annotation.
 	revoked := metadata.NewRevokedSet()
-	if err := meta.BuildRevokedSet(revoked); err != nil {
-		log.Fatalf("failed to build revocation index: %v", err)
+	meta.BuildRevokedSet(revoked)
+
+	type capEntry struct {
+		ID        string `json:"id"`
+		Hash      string `json:"hash"`
+		Perm      string `json:"perm"`
+		Principal string `json:"principal,omitempty"`
+		Expires   string `json:"expires"`
+		Status    string `json:"status"`
 	}
 
-	cm := &CapabilityMiddleware{
-		Key:            cfg.SigningKey,
-		Revoked:        revoked,
-		BootstrapToken: cfg.BootstrapToken,
+	var entries []capEntry
+	now := time.Now().UTC()
+
+	for _, entry := range meta.Log {
+		if entry.Op != metadata.OpCapability {
+			continue
+		}
+		var cap metadata.CapabilityPayload
+		if err := json.Unmarshal(entry.Payload, &cap); err != nil {
+			continue
+		}
+
+		// Apply filters.
+		if *principal != "" && cap.Principal != *principal {
+			continue
+		}
+		if *hash != "" && cap.Hash != *hash {
+			continue
+		}
+
+		status := "active"
+		if revoked.IsRevoked(cap.ID) {
+			status = "revoked"
+		} else if cap.Expires.UTC().Before(now) {
+			status = "expired"
+		}
+
+		entries = append(entries, capEntry{
+			ID:        cap.ID,
+			Hash:      cap.Hash,
+			Perm:      cap.Perm,
+			Principal: cap.Principal,
+			Expires:   cap.Expires.Format(time.RFC3339),
+			Status:    status,
+		})
 	}
 
-	// Initialise the Stytch auth client.
-	authClient, err := auth.NewClient()
-	if err != nil {
-		log.Fatalf("failed to initialise auth client: %v", err)
+	if *jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(entries)
+		return
 	}
 
-	am := &AuthMiddleware{Client: authClient}
-	rl := NewRateLimiters(cfg)
+	if len(entries) == 0 {
+		fmt.Println("No capabilities found.")
+		return
+	}
 
-	registerRoutes(store, meta, am, cm, rl, authClient, cfg)
-
-	log.Println("starting server on :8090")
-	if err := http.ListenAndServe(":8090", nil); err != nil {
-		log.Fatal(err)
+	fmt.Printf("%-12s  %-8s  %-12s  %-20s  %-8s  %s\n",
+		"ID (prefix)", "PERM", "PRINCIPAL", "EXPIRES", "STATUS", "HASH")
+	fmt.Println(fmt.Sprintf("%s", "────────────────────────────────────────────────────────────────────────────────"))
+	for _, e := range entries {
+		idPrefix := e.ID
+		if len(idPrefix) > 12 {
+			idPrefix = idPrefix[:12]
+		}
+		fmt.Printf("%-12s  %-8s  %-12s  %-20s  %-8s  %s\n",
+			idPrefix, e.Perm, e.Principal, e.Expires, e.Status, e.Hash)
 	}
 }
