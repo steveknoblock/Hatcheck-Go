@@ -32,43 +32,46 @@ On the first request to store an object the objects/ folder will be automaticall
 
 ## Hatcheck Indexing
 
-An index can be added through a plugin architecture. 
+An index is a read model built from the metadata log: every log entry is offered to every index at startup (to rebuild it) and again as each new entry is appended. Most indexes are a `Projection`, which does the decoding and storage for you. You only say which log entries you care about and what keys and values they produce.
 
-Create a struct with the three interface methods defined by Index:
+```go
+type SizeIndex struct{ *Projection[int] }
 
-```
-type MyIndex struct {
-    data map[string][]string
+func NewSizeIndex() *SizeIndex {
+    return &SizeIndex{NewProjection("size", Latest,
+        On(OpStash, func(e Entry, p StashPayload) []Pair[int] {
+            return []Pair[int]{{Key: p.Hash, Value: p.Size}}
+        }),
+    )}
 }
 
-func (m *MyIndex) Name() string { return "myindex" }
-
-func (m *MyIndex) Add(entry Entry) {
-    // extract whatever you want from entry and store it in data
-}
-
-func (m *MyIndex) Query(key string) []string {
-    return m.data[key]
+// Size returns the byte size recorded for hash, or 0 if it is unknown.
+func (s *SizeIndex) Size(hash string) int {
+    v, _ := s.Value(hash)
+    return v
 }
 ```
 
-Register it when creating the store in both server/main.go and cmd/hatcheck/main.go:
+Register it by adding it to `DefaultIndexes()` in `internal/metadata/defaults.go`. The server and the CLI both build their data indexes from that list, so there is nowhere else to add it. Indexes are always built with a constructor; there is no usable zero value.
+
+```go
+func DefaultIndexes() []Index {
+    return []Index{
+        NewTagIndex(),
+        // ...
+        NewSizeIndex(),
+    }
+}
+```
+
+The `/query` endpoint and the `hatcheck query` command then support it with no other changes:
 
 ```
-metadata.New(metaPath,
-    &metadata.TagIndex{},
-    &metadata.DateIndex{},
-    &metadata.MyIndex{},
-)
+/query?index=size&key=<hash>
+hatcheck query -index size -key <hash>
 ```
 
-**3. That's it.** The store automatically calls `Add` on every existing log entry at startup to build the index, and calls `Add` on every new stash going forward.
-
-The `/query` endpoint and `hatcheck query` CLI command immediately support it with no other changes:
-```
-/query?index=myindex&key=somevalue
-hatcheck query -index myindex -key somevalue
-```
+Indexes that need to undo earlier entries or join several kinds of state (capabilities and roles) are not projections; they implement the `Index` interface by hand and are registered separately. See [docs/indexing.md](docs/indexing.md) for the full guide.
 
 
 ## Why Claude AI?

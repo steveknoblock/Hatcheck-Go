@@ -214,3 +214,88 @@ func TestNameIndex_Namespaces_Empty(t *testing.T) {
 		t.Errorf("expected no namespaces for empty index, got %v", namespaces)
 	}
 }
+
+// --- Add / Query ---
+
+func TestNameIndex_QueryEmpty(t *testing.T) {
+	idx := NewNameIndex()
+	if got := idx.Query("bob/doc"); len(got) != 0 {
+		t.Errorf("Query on empty index = %v, want no results", got)
+	}
+}
+
+func TestNameIndex_CreateThenQuery(t *testing.T) {
+	idx := NewNameIndex()
+	idx.Add(entryForName(t, OpNameCreate, "bob/doc", "h1"))
+
+	if got := idx.Query("bob/doc"); len(got) != 1 || got[0] != "h1" {
+		t.Errorf("Query(bob/doc) = %v, want [h1]", got)
+	}
+}
+
+func TestNameIndex_UpdateRepointsLabel(t *testing.T) {
+	idx := NewNameIndex()
+	idx.Add(entryForName(t, OpNameCreate, "bob/doc", "h1"))
+	idx.Add(entryForName(t, OpNameUpdate, "bob/doc", "h2"))
+
+	if got := idx.Query("bob/doc"); len(got) != 1 || got[0] != "h2" {
+		t.Errorf("Query(bob/doc) after update = %v, want [h2]", got)
+	}
+}
+
+func TestNameIndex_QueryIsExactLabelMatch(t *testing.T) {
+	idx := NewNameIndex()
+	idx.Add(entryForName(t, OpNameCreate, "bob/doc", "h1"))
+
+	if got := idx.Query("bob/DOC"); len(got) != 0 {
+		t.Errorf("Query(bob/DOC) = %v, want none: label lookup is case-sensitive", got)
+	}
+	if got := idx.Query("bob/"); len(got) != 0 {
+		t.Errorf("Query(bob/) = %v, want none: Query is exact, not prefix", got)
+	}
+}
+
+func TestNameIndex_IgnoresOtherOps(t *testing.T) {
+	idx := NewNameIndex()
+	idx.Add(entryForName(t, OpStash, "bob/doc", "h1"))
+
+	if got := idx.Query("bob/doc"); len(got) != 0 {
+		t.Errorf("Query(bob/doc) = %v, want none after a non-name op", got)
+	}
+}
+
+func TestNameIndex_Name(t *testing.T) {
+	if got := NewNameIndex().Name(); got != "name" {
+		t.Errorf("Name() = %q, want %q", got, "name")
+	}
+}
+
+// --- Determinism ---
+
+func TestNameIndex_ListNamespace_CaseOnlyDifferencesAreDeterministic(t *testing.T) {
+	// "Apple" and "apple" tie under the case-insensitive sort; the result
+	// must not depend on the order they were added or on map iteration.
+	for _, order := range [][]string{{"Apple", "apple"}, {"apple", "Apple"}} {
+		idx := NewNameIndex()
+		for _, label := range order {
+			idx.Add(entryForName(t, OpNameCreate, "bob/"+label, "h-"+label))
+		}
+		got := idx.ListNamespace("bob/")
+		if len(got) != 2 || got[0].Label != "Apple" || got[1].Label != "apple" {
+			t.Fatalf("added %v: ListNamespace = %+v, want [Apple apple]", order, got)
+		}
+	}
+}
+
+func TestNameIndex_Namespaces_CaseOnlyDifferencesAreDeterministic(t *testing.T) {
+	for _, order := range [][]string{{"Zed/a", "zed/a"}, {"zed/a", "Zed/a"}} {
+		idx := NewNameIndex()
+		for _, label := range order {
+			idx.Add(entryForName(t, OpNameCreate, label, "h"))
+		}
+		got := idx.Namespaces()
+		if len(got) != 2 || got[0] != "Zed" || got[1] != "zed" {
+			t.Fatalf("added %v: Namespaces = %v, want [Zed zed]", order, got)
+		}
+	}
+}

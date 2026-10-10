@@ -1,7 +1,5 @@
 package metadata
 
-import "encoding/json"
-
 // KindIndex maps a hash to the kind of object that created it — "stash",
 // "collection", or "relation" — so callers can tell what a hash is
 // without fetching and parsing its content. The alternative
@@ -11,64 +9,32 @@ import "encoding/json"
 // but too expensive to do for every entry just to pick an icon when
 // rendering a whole namespace's worth of names in one list. This makes
 // that lookup O(1) instead.
+//
+// It is a Projection[string] in Latest mode. A hash's kind is fixed
+// forever once first recorded — content is addressed by its own hash, so
+// the same hash could never later be produced by a different kind of
+// operation — so Latest never actually overwrites a differing value.
 type KindIndex struct {
-	data map[string]string
+	*Projection[string]
 }
 
 func NewKindIndex() *KindIndex {
-	return &KindIndex{data: make(map[string]string)}
-}
-
-func (k *KindIndex) Name() string { return "kind" }
-
-func (k *KindIndex) Add(entry Entry) {
-	if k.data == nil {
-		k.data = make(map[string]string)
-	}
-
-	var hash, kind string
-	switch entry.Op {
-	case OpStash:
-		var p StashPayload
-		if err := json.Unmarshal(entry.Payload, &p); err != nil {
-			return
-		}
-		hash, kind = p.Hash, "stash"
-	case OpCollection:
-		var p CollectionPayload
-		if err := json.Unmarshal(entry.Payload, &p); err != nil {
-			return
-		}
-		hash, kind = p.Hash, "collection"
-	case OpRelation:
-		var p RelationPayload
-		if err := json.Unmarshal(entry.Payload, &p); err != nil {
-			return
-		}
-		hash, kind = p.Hash, "relation"
-	default:
-		return
-	}
-
-	// A hash's kind is fixed forever once first recorded — content is
-	// addressed by its own hash, so the same hash could never later be
-	// produced by a different kind of operation. No need to guard against
-	// overwriting a different value; it would always be identical anyway.
-	k.data[hash] = kind
+	return &KindIndex{NewProjection("kind", Latest,
+		On(OpStash, func(e Entry, p StashPayload) []Pair[string] {
+			return []Pair[string]{{Key: p.Hash, Value: "stash"}}
+		}),
+		On(OpCollection, func(e Entry, p CollectionPayload) []Pair[string] {
+			return []Pair[string]{{Key: p.Hash, Value: "collection"}}
+		}),
+		On(OpRelation, func(e Entry, p RelationPayload) []Pair[string] {
+			return []Pair[string]{{Key: p.Hash, Value: "relation"}}
+		}),
+	)}
 }
 
 // Kind returns the kind of object hash is ("stash", "collection", or
 // "relation"), or "" if hash has never appeared in a creation log entry.
 func (k *KindIndex) Kind(hash string) string {
-	return k.data[hash]
-}
-
-// Query satisfies the base Index interface. Kind is the real API for this
-// index (a hash maps to exactly one kind, not a list) — this just wraps it
-// in a single-element slice, or returns nil if the hash is unknown.
-func (k *KindIndex) Query(hash string) []string {
-	if kind := k.data[hash]; kind != "" {
-		return []string{kind}
-	}
-	return nil
+	kind, _ := k.Value(hash)
+	return kind
 }

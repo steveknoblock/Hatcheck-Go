@@ -17,7 +17,7 @@ func newTestStore(t *testing.T) *Store {
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
 
-	store, err := New(dir, &TagIndex{}, &DateIndex{}, &NameIndex{}, &RelationIndex{})
+	store, err := New(dir, NewTagIndex(), NewDateIndex(), NewNameIndex(), NewRelationIndex())
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestNew_PersistsAcrossReload(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	store, err := New(dir, &TagIndex{}, &DateIndex{}, &NameIndex{}, &RelationIndex{})
+	store, err := New(dir, NewTagIndex(), NewDateIndex(), NewNameIndex(), NewRelationIndex())
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestNew_PersistsAcrossReload(t *testing.T) {
 		t.Fatalf("AppendStash() error: %v", err)
 	}
 
-	store2, err := New(dir, &TagIndex{}, &DateIndex{}, &NameIndex{}, &RelationIndex{})
+	store2, err := New(dir, NewTagIndex(), NewDateIndex(), NewNameIndex(), NewRelationIndex())
 	if err != nil {
 		t.Fatalf("New() reload error: %v", err)
 	}
@@ -126,10 +126,10 @@ func TestNew_RebuildIndexesOnReload(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	store, _ := New(dir, &TagIndex{}, &DateIndex{}, &NameIndex{}, &RelationIndex{})
+	store, _ := New(dir, NewTagIndex(), NewDateIndex(), NewNameIndex(), NewRelationIndex())
 	store.AppendStash("hash1", 10, "Note #ideas")
 
-	store2, _ := New(dir, &TagIndex{}, &DateIndex{}, &NameIndex{}, &RelationIndex{})
+	store2, _ := New(dir, NewTagIndex(), NewDateIndex(), NewNameIndex(), NewRelationIndex())
 	results := store2.Query("tag", "ideas")
 	if len(results) != 1 {
 		t.Errorf("expected tag index rebuilt after reload, got %d results", len(results))
@@ -407,7 +407,7 @@ func TestStore_MigratesLegacyArrayFormatOnLoad(t *testing.T) {
 		t.Fatalf("failed to seed legacy log: %v", err)
 	}
 
-	store, err := New(dir, &TagIndex{}, &DateIndex{}, &NameIndex{}, &RelationIndex{})
+	store, err := New(dir, NewTagIndex(), NewDateIndex(), NewNameIndex(), NewRelationIndex())
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
 	}
@@ -439,7 +439,7 @@ func TestStore_MigratesLegacyArrayFormatOnLoad(t *testing.T) {
 	// A subsequent append should be a real append, not another rewrite —
 	// confirmed indirectly by re-loading and checking the entry landed.
 	store.AppendStash("ccc", 3, "z")
-	store2, err := New(dir, &TagIndex{}, &DateIndex{}, &NameIndex{}, &RelationIndex{})
+	store2, err := New(dir, NewTagIndex(), NewDateIndex(), NewNameIndex(), NewRelationIndex())
 	if err != nil {
 		t.Fatalf("New() reload error: %v", err)
 	}
@@ -464,7 +464,7 @@ func TestStore_DropsUnparsableTrailingLine(t *testing.T) {
 		t.Fatalf("failed to seed log: %v", err)
 	}
 
-	store, err := New(dir, &TagIndex{}, &DateIndex{}, &NameIndex{}, &RelationIndex{})
+	store, err := New(dir, NewTagIndex(), NewDateIndex(), NewNameIndex(), NewRelationIndex())
 	if err != nil {
 		t.Fatalf("New() should not fail on a truncated trailing line, got: %v", err)
 	}
@@ -489,7 +489,7 @@ func TestStore_CorruptMiddleLineFailsToLoad(t *testing.T) {
 		t.Fatalf("failed to seed log: %v", err)
 	}
 
-	if _, err := New(dir, &TagIndex{}, &DateIndex{}, &NameIndex{}, &RelationIndex{}); err == nil {
+	if _, err := New(dir, NewTagIndex(), NewDateIndex(), NewNameIndex(), NewRelationIndex()); err == nil {
 		t.Fatal("expected New() to fail on mid-file corruption, got nil error")
 	}
 }

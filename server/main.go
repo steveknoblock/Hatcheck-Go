@@ -658,16 +658,13 @@ func main() {
 		log.Fatalf("failed to initialise object store: %v", err)
 	}
 
-	meta, err := metadata.New(cfg.MetaPath,
-		metadata.NewTagIndex(),
-		metadata.NewDateIndex(),
-		metadata.NewNameIndex(),
-		metadata.NewRelationIndex(),
+	// The pure data indexes come from one shared list; the server adds the
+	// access-control indexes (capabilities and roles) on top of it.
+	indexes := append(metadata.DefaultIndexes(),
 		metadata.NewCapabilityIndex(),
 		metadata.NewRoleIndex(),
-		metadata.NewKindIndex(),
-		metadata.NewCreatedIndex(),
 	)
+	meta, err := metadata.New(cfg.MetaPath, indexes...)
 	if err != nil {
 		log.Fatalf("failed to load metadata store: %v", err)
 	}

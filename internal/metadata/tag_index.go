@@ -1,49 +1,31 @@
 package metadata
 
-import (
-	"encoding/json"
-	"strings"
-)
+import "strings"
 
 // TagIndex maps tags to hashes from stash entries.
+//
+// It is a Projection[string] in AppendUnique mode, keyed by tag. Lookups
+// are case-insensitive: Query lowercases the key it is given, while the
+// tags themselves are stored exactly as the stash entry recorded them
+// (ParseTags already lowercases them when the entry is written).
 type TagIndex struct {
-	data map[string][]string
+	*Projection[string]
 }
 
 func NewTagIndex() *TagIndex {
-	return &TagIndex{
-		data: make(map[string][]string),
-	}
+	return &TagIndex{NewProjection("tag", AppendUnique,
+		On(OpStash, func(e Entry, p StashPayload) []Pair[string] {
+			pairs := make([]Pair[string], 0, len(p.Tags))
+			for _, tag := range p.Tags {
+				pairs = append(pairs, Pair[string]{Key: tag, Value: p.Hash})
+			}
+			return pairs
+		}),
+	).WithQueryKey(strings.ToLower)}
 }
 
-func (t *TagIndex) Name() string { return "tag" }
-
-func (t *TagIndex) Add(entry Entry) {
-	if entry.Op != OpStash {
-		return
-	}
-	if t.data == nil {
-		t.data = make(map[string][]string)
-	}
-	var p StashPayload
-	if err := json.Unmarshal(entry.Payload, &p); err != nil {
-		return
-	}
-	for _, tag := range p.Tags {
-		t.data[tag] = appendUnique(t.data[tag], p.Hash)
-	}
-}
-
-func (t *TagIndex) Query(key string) []string {
-	return t.data[strings.ToLower(key)]
-}
-
-// Tags returns all known tag keys in the index.
+// Tags returns all known tag keys in the index, sorted.
 // Used by Store.AllTags() to populate the relation type vocabulary.
 func (t *TagIndex) Tags() []string {
-	result := make([]string, 0, len(t.data))
-	for tag := range t.data {
-		result = append(result, tag)
-	}
-	return result
+	return t.Keys()
 }
