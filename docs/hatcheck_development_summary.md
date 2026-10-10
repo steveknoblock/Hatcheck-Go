@@ -209,6 +209,12 @@ The Name label stays stable. All intermediate versions preserved in CAS.
 
 ## Backlog
 
+- **Duplicate relations** — posting an identical relation twice (same from/rel/to,
+  so the same hash) appends two log entries, and `RelationIndex` reports both, so
+  `/relations` shows the relation twice. Behavior preserved through the Projection
+  port (`Append` mode, with a test). Open question: whether to guard in
+  `AppendRelation` or `relationHandler` (reject or ignore the second POST), or to
+  leave duplicates as valid log history. The index is the wrong place to dedupe.
 - **`feature-treemap-navigator` merge** — Map tab (relations treemap) is functional on the branch: `CreatedIndex`, `/object-meta`, fan-out/recency/tag-overlap sizing, per-hash caching, and a widened Read rate-limit pool to support it. Still open: whether a single relation rendering as one full tile is worth extending to 2-hop neighbors for more visual information; general polish pass before merging to `develop-go`.
 - **SETUP.md / design doc updates** — done this session; keep current as `feature-treemap-navigator` and future work land.
 - **Document identity** — `prev` field linking versions of the same document (deferred, needs a design conversation).
