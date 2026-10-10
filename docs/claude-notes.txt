@@ -1,0 +1,15 @@
+name: modular-indexing
+description: Planning a modular indexing system for Hatcheck to replace per-index custom Go code (internal/metadata); design phase
+aliases: [modular indexes, pluggable indexes]
+
+- [stated] Wants to plan a modular indexing system to replace the existing approach where each index must be custom-developed software
+- [stated] Main goal: reduce repeated code and modularize indexing; the modular system may cover a smaller set of index types (no longer required to support all existing kinds)
+- [stated] Main pain to remove: writing the same Unmarshal/switch-on-Op boilerplate for each index
+- [stated] Undecided who defines a new index and how (declarative config vs compiled-in modules vs definitions in the log); wants tradeoffs
+- [stated] Created branch `feature-index` for this work
+- [stated] Going with the name `Projection` for the generic index-building type (`Projection[V]`) rather than `Table`
+- [stated] Decided to drop zero-value construction of indexes (`&metadata.TagIndex{}` style); use constructors instead (e.g. a shared `DefaultIndexes()`)
+- [stated] Asked me to start with the Projection core (`internal/metadata/projection.go` + `projection_test.go` on `feature-index`); core written and tests passed in my sandbox, handed to them to push
+- [stated] `DefaultIndexes()` should return only the pure data indexes (not Role/Capability)
+- [stated] On `feature-index`: Projection core, Kind and Created ports, `DefaultIndexes()` and the CLI change are committed; `go build ./... && go test ./...` passes. Tag and Date ports also done (tests pass, runs). Name and Relation ports also done (build and tests pass); all add-only indexes now on Projection (added an `Append` mode for Relation). server/main.go now uses DefaultIndexes() (committed, build and tests pass). README indexing section rewritten and docs/indexing.md added (tests pass, runs). feature-index merged into develop-go (--no-ff) and pushed over SSH. Open items: identical-relation duplicate (guard in AppendRelation/handler is their call); Windows VS Code copy needs a pull
+- [stated] Liked the idea of merging feature-index into develop-go with a `--no-ff` merge commit (develop-go had not moved, so a fast-forward was possible)
