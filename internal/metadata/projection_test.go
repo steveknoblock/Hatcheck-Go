@@ -41,7 +41,7 @@ func newTestKindProjection() *Projection[string] {
 }
 
 func newTestRelationProjection() *Projection[RelationPayload] {
-	return NewProjection("relation", AppendUnique,
+	return NewProjection("relation", Append,
 		On(OpRelation, func(e Entry, p RelationPayload) []Pair[RelationPayload] {
 			return []Pair[RelationPayload]{
 				{Key: "from:" + p.From, Value: p},
@@ -137,6 +137,23 @@ func TestProjection_QueryKeyNormalizesLookupOnly(t *testing.T) {
 	// Stored keys are exactly what the handler emitted.
 	if got := p.Keys(); !reflect.DeepEqual(got, []string{"go"}) {
 		t.Errorf("Keys() = %v, want [go]", got)
+	}
+}
+
+// --- Append mode ---
+
+func TestProjection_Append_KeepsDuplicateValuesInOrder(t *testing.T) {
+	p := NewProjection("append", Append,
+		On(OpStash, func(e Entry, p StashPayload) []Pair[string] {
+			return []Pair[string]{{Key: "all", Value: p.Hash}}
+		}),
+	)
+	p.Add(stashEntry(t, "h1"))
+	p.Add(stashEntry(t, "h2"))
+	p.Add(stashEntry(t, "h1"))
+
+	if got, want := p.Query("all"), []string{"h1", "h2", "h1"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Query(all) = %v, want %v (Append must not dedupe)", got, want)
 	}
 }
 

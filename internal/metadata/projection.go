@@ -22,6 +22,12 @@ const (
 	// Latest keeps exactly one value per key; a later value replaces an
 	// earlier one. Kind, Created and Name-style indexes use this.
 	Latest
+
+	// Append keeps a list of values per key, in arrival order, and keeps
+	// every value — duplicates included. It is for indexes whose values
+	// are log records rather than set members, where two identical
+	// entries are two facts (Relation uses this).
+	Append
 )
 
 // Pair is one key/value mutation produced by a handler for a log entry.
@@ -138,6 +144,8 @@ func (p *Projection[V]) put(pair Pair[V]) {
 	switch p.mode {
 	case Latest:
 		p.data[pair.Key] = []V{pair.Value}
+	case Append:
+		p.data[pair.Key] = append(p.data[pair.Key], pair.Value)
 	default: // AppendUnique
 		for _, existing := range p.data[pair.Key] {
 			if existing == pair.Value {
